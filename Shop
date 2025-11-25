@@ -1,0 +1,280 @@
+import React, { useState, useEffect } from "react";
+import { base44 } from "@/api/base44Client";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ShoppingBag, Coins, Sword, Shield as ShieldIcon, Sparkles, HardHat, Package, Footprints } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { motion, AnimatePresence } from "framer-motion";
+import { weaponConfig, armorGroupConfig } from "../components/rpg/WeaponConfig";
+import { generateItem } from "../components/rpg/ItemGenerator";
+import ItemCard from "../components/rpg/ItemCard";
+
+const rarityColors = {
+  common: "bg-gray-500 text-white border-gray-600",
+  uncommon: "bg-green-500 text-white border-green-600",
+  rare: "bg-blue-500 text-white border-blue-600",
+  epic: "bg-purple-500 text-white border-purple-600"
+};
+
+const rarityNames = {
+  common: "Comum",
+  uncommon: "Incomum",
+  rare: "Raro",
+  epic: "Épico"
+};
+
+const rarityMultipliers = {
+  common: 3.3,
+  uncommon: 4.5,
+  rare: 6,
+  epic: 9.6
+};
+
+const typeIcons = {
+  weapon: Sword,
+  armor: ShieldIcon,
+  helmet: HardHat,
+  boots: Footprints,
+  amulet: Sparkles
+};
+
+const typeNames = {
+  weapon: "Arma",
+  armor: "Armadura",
+  helmet: "Capacete",
+  boots: "Bota",
+  amulet: "Amuleto"
+};
+
+const substatNames = {
+  strength: "FOR",
+  intelligence: "INT",
+  dexterity: "DES",
+  vigor: "VIG",
+  wisdom: "SAB",
+  agility: "AGI"
+};
+
+const generateShopItems = (maxCharLevel = 1) => {
+  const items = [];
+  for (let i = 0; i < 8; i++) {
+    const rand = Math.random();
+    let rarity;
+    if (rand < 0.70) rarity = 'common';
+    else if (rand < 0.90) rarity = 'uncommon';
+    else if (rand < 0.99) rarity = 'rare';
+    else rarity = 'epic';
+    
+    const maxLevel = Math.min(50, maxCharLevel + 5);
+    const levelRange = [1, maxLevel];
+    
+    const itemData = generateItem(rarity, maxCharLevel, levelRange);
+    
+    let totalStats = 0;
+    if (itemData.type === 'weapon') {
+      totalStats = (itemData.damage_modifier_min + itemData.damage_modifier_max) / 2;
+    } else {
+      totalStats = itemData.primary_substat_value || 0;
+    }
+    
+    if (itemData.substats) {
+      itemData.substats.forEach(s => totalStats += s.value);
+    }
+    
+    let price = Math.floor(50 + totalStats + (totalStats * rarityMultipliers[rarity]));
+    
+    if (itemData.type === 'weapon') {
+      price = Math.floor(price * 0.5);
+    }
+    
+    items.push({
+      ...itemData,
+      id: `shop_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 9)}`,
+      price: price,
+      sold: false
+    });
+  }
+
+  return items;
+};
+
+export default function Shop() {
+  const [shopItems, setShopItems] = useState([]);
+  const [user, setUser] = useState(null);
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    base44.auth.me().then(setUser).catch(() => {});
+  }, []);
+
+  const { data: characters } = useQuery({
+    queryKey: ['characters'],
+    queryFn: () => base44.entities.Character.list(),
+    initialData: [],
+  });
+
+  const { data: inventory } = useQuery({
+    queryKey: ['inventory'],
+    queryFn: () => base44.entities.Inventory.list(),
+    initialData: [],
+  });
+
+  const { data: games } = useQuery({
+    queryKey: ['games'],
+    queryFn: () => base44.entities.Game.list('-created_date', 1),
+    initialData: [],
+  });
+
+  const myCharacters = characters.filter(c => c.created_by === user?.email);
+  const maxCharLevel = myCharacters.length > 0 ? Math.max(...myCharacters.map(c => c.level)) : 1;
+
+  useEffect(() => {
+    const storedItems = localStorage.getItem('shopItems');
+    if (storedItems) {
+      setShopItems(JSON.parse(storedItems));
+    } else {
+      const items = generateShopItems(maxCharLevel);
+      setShopItems(items);
+      localStorage.setItem('shopItems', JSON.stringify(items));
+    }
+  }, [maxCharLevel]);
+
+  useEffect(() => {
+    if (games.length > 0) {
+      const lastGame = games[0];
+      if (lastGame.status === 'finished' && lastGame.winner === lastGame.player1_name) {
+        const storedLastGame = localStorage.getItem('lastProcessedGame');
+        if (storedLastGame !== lastGame.id) {
+          localStorage.setItem('lastProcessedGame', lastGame.id);
+          const items = generateShopItems(maxCharLevel);
+          setShopItems(items);
+          localStorage.setItem('shopItems', JSON.stringify(items));
+        }
+      }
+    }
+  }, [games, maxCharLevel]);
+
+  const createInventoryMutation = useMutation({
+    mutationFn: (data) => base44.entities.Inventory.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+    },
+  });
+
+  const handleBuyItem = async (item, index) => {
+    if ((user.gold || 0) < item.price) {
+      alert("Ouro insuficiente!");
+      return;
+    }
+
+    const myInventory = inventory.filter(i => i.created_by === user?.email);
+    const equippedIds = new Set();
+    myCharacters.forEach(c => {
+      [c.equipped_weapon, c.equipped_armor, c.equipped_helmet, c.equipped_boots, c.equipped_amulet].forEach(id => {
+        if (id) equippedIds.add(id);
+      });
+    });
+    const unequippedCount = myInventory.filter(i => !equippedIds.has(i.id)).length;
+
+    if (unequippedCount >= 10) {
+      alert("Inventário cheio!");
+      return;
+    }
+
+    const { id, price, sold, ...itemToCreate } = item;
+    createInventoryMutation.mutate(itemToCreate);
+
+    await base44.auth.updateMe({ gold: (user.gold || 0) - item.price });
+    const newUser = await base44.auth.me();
+    setUser(newUser);
+
+    const updatedItems = [...shopItems];
+    updatedItems[index] = { ...item, sold: true };
+    setShopItems(updatedItems);
+    localStorage.setItem('shopItems', JSON.stringify(updatedItems));
+  };
+
+  const myInventory = inventory.filter(i => i.created_by === user?.email);
+  const equippedIds = new Set();
+  myCharacters.forEach(c => {
+    [c.equipped_weapon, c.equipped_armor, c.equipped_helmet, c.equipped_boots, c.equipped_amulet].forEach(id => {
+      if (id) equippedIds.add(id);
+    });
+  });
+  const unequippedCount = myInventory.filter(i => !equippedIds.has(i.id)).length;
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-emerald-900 via-green-900 to-teal-900 p-4 md:p-8">
+      <div className="max-w-7xl mx-auto">
+        <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <div className="flex items-center gap-3 mb-2">
+                <ShoppingBag className="w-10 h-10 text-amber-400" />
+                <h1 className="text-4xl font-bold text-amber-100" style={{ fontFamily: 'serif' }}>Loja de Itens</h1>
+              </div>
+              <p className="text-emerald-300">Novos itens aparecem após completar batalhas</p>
+            </div>
+
+            <div className="flex gap-4">
+              <div className="bg-yellow-900/30 border border-yellow-700/50 rounded-lg px-6 py-3">
+                <div className="flex items-center gap-2">
+                  <Coins className="w-6 h-6 text-yellow-500" />
+                  <div>
+                    <p className="text-yellow-300 text-xs">Ouro</p>
+                    <p className="text-yellow-100 font-bold text-2xl">{user?.gold || 0}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-purple-900/30 border border-purple-700/50 rounded-lg px-6 py-3">
+                <div className="flex items-center gap-2">
+                  <Package className="w-6 h-6 text-purple-500" />
+                  <div>
+                    <p className="text-purple-300 text-xs">Inventário</p>
+                    <p className="text-purple-100 font-bold text-2xl">{unequippedCount}/10</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </motion.div>
+
+        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <AnimatePresence>
+            {shopItems.map((item, index) => {
+              const canAfford = (user?.gold || 0) >= item.price;
+              const hasSpace = unequippedCount < 10;
+              
+              return (
+                <motion.div key={item.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.05 }}>
+                  <Card className="bg-gradient-to-br from-stone-900/80 to-stone-800/80 backdrop-blur-sm border-amber-700/30">
+                    <CardContent className="pt-4 space-y-3">
+                      <ItemCard item={item} action={null} actionLabel={null} showTooltip={true} />
+                      
+                      <div className="bg-yellow-900/40 rounded-lg p-2 border border-yellow-700/50">
+                        <div className="flex items-center justify-between">
+                          <span className="text-yellow-300 text-sm font-bold">Preço:</span>
+                          <div className="flex items-center gap-1">
+                            <Coins className="w-4 h-4 text-yellow-500" />
+                            <span className="text-yellow-100 font-bold">{item.price}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <Button onClick={() => handleBuyItem(item, index)} disabled={!canAfford || !hasSpace || item.sold}
+                        className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed">
+                        {item.sold ? "Esgotado" : !hasSpace ? "Inventário Cheio" : !canAfford ? "Ouro Insuficiente" : "Comprar"}
+                      </Button>
+                    </CardContent>
+                  </Card>
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
+        </div>
+      </div>
+    </div>
+  );
+}
