@@ -1,0 +1,284 @@
+import React, { useState, useEffect } from "react";
+import { base44 } from "@/api/base44Client";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Package, Sword, Shield, HardHat, Sparkles, Trash2, DollarSign, Footprints, Coins } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { motion, AnimatePresence } from "framer-motion";
+import { weaponConfig, armorGroupConfig } from "../components/rpg/WeaponConfig";
+import ItemCard from "../components/rpg/ItemCard";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+
+const rarityColors = {
+  common: "bg-gray-500 text-white",
+  uncommon: "bg-green-500 text-white",
+  rare: "bg-blue-500 text-white",
+  epic: "bg-purple-500 text-white",
+  legendary: "bg-orange-500 text-white"
+};
+
+const rarityNames = {
+  common: "Comum",
+  uncommon: "Incomum",
+  rare: "Raro",
+  epic: "Épico",
+  legendary: "Lendário"
+};
+
+const typeIcons = {
+  weapon: Sword,
+  armor: Shield,
+  helmet: HardHat,
+  boots: Footprints,
+  amulet: Sparkles
+};
+
+const typeNames = {
+  weapon: "Arma",
+  armor: "Armadura",
+  helmet: "Capacete",
+  boots: "Bota",
+  amulet: "Amuleto"
+};
+
+const substatInfo = {
+  strength: { name: "Força" },
+  intelligence: { name: "Inteligência" },
+  dexterity: { name: "Destreza" },
+  vigor: { name: "Vigor" },
+  wisdom: { name: "Sabedoria" },
+  agility: { name: "Agilidade" }
+};
+
+export default function Inventory() {
+  const [user, setUser] = useState(null);
+  const [sellDialogOpen, setSellDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [equippedWarningOpen, setEquippedWarningOpen] = useState(false);
+  const [itemToSell, setItemToSell] = useState(null);
+  const [itemToDelete, setItemToDelete] = useState(null);
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    base44.auth.me().then(setUser).catch(() => {});
+  }, []);
+
+  const { data: inventory, isLoading } = useQuery({
+    queryKey: ['inventory'],
+    queryFn: () => base44.entities.Inventory.list(),
+    initialData: [],
+  });
+
+  const { data: characters } = useQuery({
+    queryKey: ['characters'],
+    queryFn: () => base44.entities.Character.list(),
+    initialData: [],
+  });
+
+  const deleteInventoryMutation = useMutation({
+    mutationFn: (id) => base44.entities.Inventory.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['user'] });
+      setDeleteDialogOpen(false);
+      setSellDialogOpen(false);
+      setItemToDelete(null);
+      setItemToSell(null);
+    },
+  });
+
+  const myInventory = inventory.filter(i => i.created_by === user?.email);
+  const myCharacters = characters.filter(c => c.created_by === user?.email);
+
+  const isEquipped = (itemId) => {
+    return myCharacters.some(char =>
+      char.equipped_weapon === itemId ||
+      char.equipped_armor === itemId ||
+      char.equipped_helmet === itemId ||
+      char.equipped_boots === itemId ||
+      char.equipped_amulet === itemId
+    );
+  };
+
+  const handleSellClick = (item) => {
+    if (isEquipped(item.id)) {
+      setEquippedWarningOpen(true);
+      return;
+    }
+    setItemToSell(item);
+    setSellDialogOpen(true);
+  };
+
+  const confirmSell = async () => {
+    if (!itemToSell || !user) return;
+
+    const sellPrice = itemToSell.sell_price !== undefined && itemToSell.sell_price !== null ? 
+      itemToSell.sell_price :
+      (itemToSell.type === 'weapon' ? 
+        Math.floor((itemToSell.damage_modifier_min + itemToSell.damage_modifier_max) / 2) :
+        Math.floor((itemToSell.primary_substat_value || 0) * 2));
+    
+    await base44.auth.updateMe({ 
+      gold: (user.gold || 0) + sellPrice
+    });
+    
+    deleteInventoryMutation.mutate(itemToSell.id);
+    
+    setUser(prevUser => ({
+      ...prevUser,
+      gold: (prevUser.gold || 0) + sellPrice
+    }));
+
+    setSellDialogOpen(false);
+    setItemToSell(null);
+  };
+
+  const handleDeleteClick = (item) => {
+    if (isEquipped(item.id)) {
+      setEquippedWarningOpen(true);
+      return;
+    }
+    setItemToDelete(item);
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDelete = () => {
+    if (itemToDelete) {
+      deleteInventoryMutation.mutate(itemToDelete.id);
+    }
+  };
+
+  const equippedCount = myInventory.filter(item => isEquipped(item.id)).length;
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-emerald-900 via-green-900 to-teal-900 p-4 md:p-8">
+      <div className="max-w-7xl mx-auto">
+        <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
+          <div className="flex items-center gap-3 mb-2">
+            <Package className="w-10 h-10 text-amber-400" />
+            <h1 className="text-4xl font-bold text-amber-100" style={{ fontFamily: 'serif' }}>Inventário Global</h1>
+          </div>
+          <p className="text-emerald-300">Gerencie todos os seus itens ({myInventory.length - equippedCount}/10 - {equippedCount} equipados)</p>
+        </motion.div>
+
+        {isLoading ? (
+          <div className="text-center py-12 text-emerald-300">Carregando...</div>
+        ) : myInventory.length === 0 ? (
+          <div className="text-center py-12">
+            <Package className="w-16 h-16 mx-auto mb-4 text-emerald-700" />
+            <p className="text-emerald-300 text-lg">Seu inventário está vazio</p>
+            <p className="text-emerald-400 text-sm mt-2">Derrote monstros ou compre itens na loja</p>
+          </div>
+        ) : (
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <AnimatePresence mode="popLayout">
+              {myInventory.map(item => {
+                const equipped = isEquipped(item.id);
+                const calculatedSellPrice = item.sell_price !== undefined && item.sell_price !== null ? 
+                  item.sell_price :
+                  (item.type === 'weapon' ? 
+                    Math.floor((item.damage_modifier_min + item.damage_modifier_max) / 2) :
+                    Math.floor((item.primary_substat_value || 0) * 2));
+                
+                return (
+                  <motion.div key={item.id} layout initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.8 }}>
+                    <Card className="bg-gradient-to-br from-stone-900/80 to-stone-800/80 backdrop-blur-sm border-amber-700/30">
+                      <CardContent className="pt-4 space-y-3">
+                        {equipped && (
+                          <Badge className="bg-emerald-600 w-full justify-center">Equipado</Badge>
+                        )}
+                        
+                        <ItemCard
+                          item={item}
+                          action={null}
+                          actionLabel={null}
+                          showTooltip={true}
+                        />
+                        
+                        <div className="flex gap-2">
+                          <Button onClick={() => handleSellClick(item)} size="sm" className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-xs">
+                            <DollarSign className="w-3 h-3 mr-1" />
+                            Vender ({calculatedSellPrice})
+                          </Button>
+                          <Button onClick={() => handleDeleteClick(item)} size="sm" variant="outline"
+                            className="bg-red-900/30 border-red-700/50 hover:bg-red-800/40">
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </motion.div>
+                );
+              })}
+            </AnimatePresence>
+          </div>
+        )}
+      </div>
+
+      <AlertDialog open={sellDialogOpen} onOpenChange={setSellDialogOpen}>
+        <AlertDialogContent className="bg-stone-900 border-amber-800/30">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-amber-100">Vender Item?</AlertDialogTitle>
+            <AlertDialogDescription className="text-amber-300">
+              Tem certeza que deseja vender <span className="font-bold">{itemToSell?.name}</span> por <span className="text-yellow-400 font-bold">
+                {itemToSell?.sell_price !== undefined && itemToSell?.sell_price !== null ? 
+                  itemToSell.sell_price :
+                  (itemToSell?.type === 'weapon' ? 
+                    Math.floor(((itemToSell?.damage_modifier_min || 0) + (itemToSell?.damage_modifier_max || 0)) / 2) :
+                    Math.floor((itemToSell?.primary_substat_value || 0) * 2))
+                } ouro</span>?
+              Este ouro será adicionado ao seu saldo global.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="bg-stone-800 text-amber-100 border-amber-900/50">Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmSell} className="bg-yellow-600 hover:bg-yellow-700">Confirmar Venda</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent className="bg-stone-900 border-amber-800/30">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-amber-100">Deletar Item?</AlertDialogTitle>
+            <AlertDialogDescription className="text-amber-300">
+              Tem certeza que deseja deletar permanentemente <span className="font-bold">{itemToDelete?.name}</span>? Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="bg-stone-800 text-amber-100 border-amber-900/50">Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete} className="bg-red-600 hover:bg-red-700">Confirmar Exclusão</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={equippedWarningOpen} onOpenChange={setEquippedWarningOpen}>
+        <AlertDialogContent className="bg-stone-900 border-amber-800/30">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-amber-100">Item Equipado</AlertDialogTitle>
+            <AlertDialogDescription className="text-amber-300">
+              Este item está equipado em um de seus personagens. Por favor, desequipe-o primeiro para poder vendê-lo ou deletá-lo.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => {
+              setEquippedWarningOpen(false);
+              setItemToSell(null);
+              setItemToDelete(null);
+            }} className="bg-amber-600 hover:bg-amber-700">Entendido</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
