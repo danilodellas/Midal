@@ -1,0 +1,194 @@
+import React from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Sparkles, Sword, Heart, Crosshair, Zap, Shield, Target } from "lucide-react";
+import { motion } from "framer-motion";
+import { Badge } from "@/components/ui/badge";
+
+const traits = [
+  {
+    name: "Forte",
+    icon: Sword,
+    color: "from-orange-600 to-orange-700",
+    description: "Personagens fortes possuem músculos desenvolvidos e força bruta",
+    bonusRange: "9% - 14%",
+    substat: "Força",
+    effects: [
+      "Aumenta o substatus Força",
+      "+0.5 de Ataque por ponto de Força (Arma Pesada)",
+      "+0.6% de Dano Crítico por ponto de Força"
+    ]
+  },
+  {
+    name: "Saudável",
+    icon: Heart,
+    color: "from-red-600 to-red-700",
+    description: "Personagens saudáveis têm constituição robusta e resistência superior",
+    bonusRange: "9% - 14%",
+    substat: "Vigor",
+    effects: [
+      "Aumenta o substatus Vigor",
+      "+1 de Vida por ponto de Vigor",
+      "+0.5 de Defesa por ponto de Vigor (Armadura Pesada)"
+    ]
+  },
+  {
+    name: "Ambidestro",
+    icon: Crosshair,
+    color: "from-green-600 to-green-700",
+    description: "Personagens ambidestros possuem coordenação motora excepcional",
+    bonusRange: "9% - 14%",
+    substat: "Destreza",
+    effects: [
+      "Aumenta o substatus Destreza",
+      "+0.5 de Ataque por ponto de Destreza (Arma Rápida)",
+      "+0.1% de Chance Crítico por ponto de Destreza"
+    ]
+  },
+  {
+    name: "Ágil",
+    icon: Zap,
+    color: "from-green-600 to-green-700",
+    description: "Personagens ágeis são rápidos e difíceis de acertar",
+    bonusRange: "9% - 14%",
+    substat: "Agilidade",
+    effects: [
+      "Aumenta o substatus Agilidade",
+      "+0.5 de Defesa por ponto de Agilidade (Armadura Leve)",
+      "+0.1% de Esquiva por ponto de Agilidade"
+    ]
+  },
+  {
+    name: "Inteligente",
+    icon: Sparkles,
+    color: "from-blue-600 to-blue-700",
+    description: "Personagens inteligentes dominam estratégias e magia",
+    bonusRange: "9% - 14%",
+    substat: "Inteligência",
+    effects: [
+      "Aumenta o substatus Inteligência",
+      "+0.5 de Ataque por ponto de Inteligência (Arma Mágica)",
+      "+1 de Mana por ponto de Inteligência"
+    ]
+  },
+  {
+    name: "Sábio",
+    icon: Shield,
+    color: "from-blue-600 to-blue-700",
+    description: "Personagens sábios possuem sabedoria e resistência mental",
+    bonusRange: "9% - 14%",
+    substat: "Sabedoria",
+    effects: [
+      "Aumenta o substatus Sabedoria",
+      "+0.5 de Defesa por ponto de Sabedoria (Armadura Mágica)",
+      "+0.2% de Resiliência por ponto de Sabedoria",
+      "+0.5% de Bônus de Recompensas por ponto de Sabedoria"
+    ]
+  },
+  {
+    name: "Preciso",
+    icon: Crosshair,
+    color: "from-yellow-600 to-yellow-700",
+    description: "Personagens precisos têm mira perfeita e golpes certeiros",
+    bonusRange: "Fixo",
+    substat: "Crítico",
+    effects: [
+      "+5% de Chance de Crítico",
+      "+20% de Dano Crítico"
+    ]
+  },
+  {
+    name: "Reflexo Rápido",
+    icon: Zap,
+    color: "from-cyan-600 to-cyan-700",
+    description: "Personagens com reflexos rápidos reagem instantaneamente",
+    bonusRange: "Fixo",
+    substat: "Defesa",
+    effects: [
+      "+5% de Chance de Esquiva",
+      "+8% de Resiliência contra debuffs"
+    ]
+  }
+];
+
+const TraitCard = ({ trait }) => {
+  const Icon = trait.icon;
+  
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.9 }}
+      animate={{ opacity: 1, scale: 1 }}
+      whileHover={{ scale: 1.02 }}
+    >
+      <Card className="bg-gradient-to-br from-stone-900/80 to-stone-800/80 backdrop-blur-sm border-amber-700/30 overflow-hidden hover:shadow-xl hover:shadow-amber-500/20 transition-all duration-300">
+        <div className={`h-2 bg-gradient-to-r ${trait.color}`} />
+        
+        <CardHeader>
+          <div className="flex items-start justify-between">
+            <div className="flex items-center gap-3">
+              <div className={`w-12 h-12 rounded-lg flex items-center justify-center bg-gradient-to-br ${trait.color}`}>
+                <Icon className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <CardTitle className="text-amber-100 text-lg">{trait.name}</CardTitle>
+                <Badge className="bg-purple-600 mt-1">Traço Especial</Badge>
+              </div>
+            </div>
+          </div>
+        </CardHeader>
+
+        <CardContent className="space-y-3">
+          <p className="text-amber-300 text-sm">{trait.description}</p>
+          
+          <div className="bg-stone-950/50 rounded p-3 border border-stone-700">
+            <p className="text-stone-400 text-xs mb-2">{trait.bonusRange === 'Fixo' ? 'Bônus' : `Bônus em ${trait.substat}`}</p>
+            <p className="text-emerald-300 font-bold">{trait.bonusRange}</p>
+          </div>
+
+          <div className="bg-stone-950/50 rounded p-3 border border-stone-700">
+            <p className="text-stone-400 text-xs mb-2">Efeitos</p>
+            <ul className="space-y-1">
+              {trait.effects.map((effect, index) => (
+                <li key={index} className="text-amber-200 text-xs">• {effect}</li>
+              ))}
+            </ul>
+          </div>
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+};
+
+export default function Traits() {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-emerald-900 via-green-900 to-teal-900 p-4 md:p-8">
+      <div className="max-w-7xl mx-auto">
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-8"
+        >
+          <div className="flex items-center gap-3 mb-2">
+            <Sparkles className="w-10 h-10 text-amber-400" />
+            <h1 className="text-4xl font-bold text-amber-100" style={{ fontFamily: 'serif' }}>
+              Traços de Personagem
+            </h1>
+          </div>
+          <p className="text-emerald-300">Características especiais desbloqueadas no Nível 30</p>
+        </motion.div>
+
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {traits.map((trait, index) => (
+            <motion.div
+              key={trait.name}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: index * 0.1 }}
+            >
+              <TraitCard trait={trait} />
+            </motion.div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
