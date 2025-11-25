@@ -1,0 +1,654 @@
+import React, { useState, useEffect } from "react";
+import { base44 } from "@/api/base44Client";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Sword, Target, Flame, Shield, Heart, Sparkles, Users, Zap, Crosshair, Ghost, Wind, Eye, Cross, Crown } from "lucide-react";
+import { motion } from "framer-motion";
+import { Input } from "@/components/ui/input";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogFooter,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from "@/components/ui/alert-dialog";
+import PixelWarrior from "../components/rpg/PixelWarrior";
+import { abilityDescriptions } from "../components/rpg/AbilityDescriptions";
+import AptitudeDisplay from "../components/rpg/AptitudeDisplay";
+
+const classConfig = {
+  Guerreiro: { hp: 60, attack: 10, defense: 5, ability: "double_strike", icon: Sword, color: "from-red-600 to-red-700", manaCost: 6, rarity: "common" },
+  Arqueiro: { hp: 50, attack: 13, defense: 3, ability: "arrow_line", icon: Target, color: "from-green-600 to-green-700", manaCost: 6, rarity: "common" },
+  Mago: { hp: 45, attack: 12, defense: 3, ability: "magic_column", icon: Flame, color: "from-purple-600 to-purple-700", manaCost: 8, rarity: "common" },
+  Guarda: { hp: 65, attack: 9, defense: 6, ability: "just_strike", icon: Shield, color: "from-cyan-600 to-cyan-700", manaCost: 6, rarity: "uncommon" },
+  Bruxo: { hp: 48, attack: 11, defense: 4, ability: "power_column", icon: Wind, color: "from-indigo-600 to-indigo-700", manaCost: 8, rarity: "uncommon" },
+  Batedor: { hp: 52, attack: 12, defense: 4, ability: "sharp_arrow_line", icon: Target, color: "from-teal-600 to-teal-700", manaCost: 6, rarity: "uncommon" },
+  Sentinela: { hp: 55, attack: 11, defense: 5, ability: "trap", icon: Eye, color: "from-amber-600 to-amber-700", manaCost: 6, rarity: "rare" },
+  Sacerdote: { hp: 50, attack: 9, defense: 5, ability: "heal", icon: Cross, color: "from-yellow-600 to-yellow-700", manaCost: 8, rarity: "rare" },
+  Templário: { hp: 62, attack: 11, defense: 6, ability: "royal_strike", icon: Crown, color: "from-purple-600 to-purple-700", manaCost: 6, rarity: "rare" },
+  Espadachim: { hp: 58, attack: 13, defense: 4, ability: "slash", icon: Sword, color: "from-pink-600 to-pink-700", manaCost: 8, rarity: "epic" },
+  Místico: { hp: 48, attack: 14, defense: 3, ability: "lightning_bolt", icon: Sparkles, color: "from-violet-600 to-violet-700", manaCost: 10, rarity: "epic" }
+};
+
+const traitConfig = {
+  strong: { name: "Forte", icon: Sword, color: "text-orange-400", stat: "strength", desc: "Aumenta Força" },
+  healthy: { name: "Saudável", icon: Heart, color: "text-red-400", stat: "vigor", desc: "Aumenta Vigor" },
+  ambidextrous: { name: "Ambidestro", icon: Crosshair, color: "text-green-400", stat: "dexterity", desc: "Aumenta Destreza" },
+  agile: { name: "Ágil", icon: Zap, color: "text-green-400", stat: "agility", desc: "Aumenta Agilidade" },
+  intelligent: { name: "Inteligente", icon: Sparkles, color: "text-blue-400", stat: "intelligence", desc: "Aumenta Inteligência" },
+  wise: { name: "Sábio", icon: Shield, color: "text-blue-400", stat: "wisdom", desc: "Aumenta Sabedoria" },
+  precise: { name: "Preciso", icon: Target, color: "text-yellow-400", stat: null, desc: "+5% Crítico e +20% Dano Crítico" },
+  quick_reflex: { name: "Reflexo Rápido", icon: Zap, color: "text-cyan-400", stat: null, desc: "+5% Esquiva e +8% Resiliência" }
+};
+
+const substatNames = {
+  strength: "FOR", intelligence: "INT", dexterity: "DES",
+  vigor: "VIG", wisdom: "SAB", agility: "AGI"
+};
+
+const substatColors = {
+  strength: "text-orange-400", vigor: "text-orange-400",
+  intelligence: "text-blue-400", wisdom: "text-blue-400",
+  dexterity: "text-green-400", agility: "text-green-400"
+};
+
+const rarityColors = {
+  common: "bg-gray-500",
+  uncommon: "bg-green-500",
+  rare: "bg-blue-500",
+  epic: "bg-purple-500"
+};
+
+const rarityNames = {
+  common: "Comum",
+  uncommon: "Incomum",
+  rare: "Raro",
+  epic: "Épico"
+};
+
+const generateRecruit = (isAdvanced) => {
+  let selectedClass = 'Guerreiro';
+  let rarity = 'common';
+  
+  if (isAdvanced) {
+    const roll = Math.random();
+    if (roll < 0.01) {
+      rarity = 'epic';
+    } else if (roll < 0.25) {
+      rarity = 'rare';
+    } else {
+      rarity = 'uncommon';
+    }
+    
+    const uncommonClasses = ['Guarda', 'Bruxo', 'Batedor'];
+    const rareClasses = ['Sentinela', 'Sacerdote', 'Templário'];
+    const epicClasses = ['Espadachim', 'Místico'];
+    
+    if (rarity === 'uncommon') {
+      selectedClass = uncommonClasses[Math.floor(Math.random() * uncommonClasses.length)];
+    } else if (rarity === 'rare') {
+      selectedClass = rareClasses[Math.floor(Math.random() * rareClasses.length)];
+    } else if (rarity === 'epic') {
+      selectedClass = epicClasses[Math.floor(Math.random() * epicClasses.length)];
+    } else {
+      selectedClass = uncommonClasses[Math.floor(Math.random() * uncommonClasses.length)];
+      rarity = 'uncommon';
+    }
+  } else {
+    const commonClasses = ['Guerreiro', 'Arqueiro', 'Mago'];
+    selectedClass = commonClasses[Math.floor(Math.random() * commonClasses.length)];
+    rarity = 'common';
+  }
+  
+  const config = classConfig[selectedClass];
+  
+  const traits = Object.keys(traitConfig);
+  const selectedTrait = isAdvanced ? traits[Math.floor(Math.random() * traits.length)] : null;
+  
+  let traitValue = 0;
+  if (selectedTrait) {
+    traitValue = 0.09 + (Math.random() * 0.05);
+  }
+
+  const substats = isAdvanced ? {
+    strength: 1 + Math.floor(Math.random() * 10),
+    intelligence: 1 + Math.floor(Math.random() * 10),
+    dexterity: 1 + Math.floor(Math.random() * 10),
+    vigor: 1 + Math.floor(Math.random() * 10),
+    wisdom: 1 + Math.floor(Math.random() * 10),
+    agility: 1 + Math.floor(Math.random() * 10)
+  } : {
+    strength: 0,
+    intelligence: 0,
+    dexterity: 0,
+    vigor: 0,
+    wisdom: 0,
+    agility: 0
+  };
+
+  const weaponGroups = ['heavy', 'magic', 'fast'];
+  const armorGroups = ['heavy', 'light', 'magic'];
+  
+  const substatKeys = ['strength', 'intelligence', 'dexterity', 'vigor', 'wisdom', 'agility'];
+  const abilitySubstat = substatKeys[Math.floor(Math.random() * substatKeys.length)];
+  
+  let abilityMultiplier = 10 + Math.floor(Math.random() * 21);
+  let abilityDefenseBuff = null;
+  let abilityAttackBuff = null;
+  let abilityDefenseDebuff = null;
+  let abilityAttackDebuff = null;
+
+  if (selectedClass === 'Guarda') {
+    abilityDefenseBuff = 20 + Math.floor(Math.random() * 21);
+  } else if (selectedClass === 'Bruxo') {
+    abilityAttackBuff = 20 + Math.floor(Math.random() * 21);
+  } else if (selectedClass === 'Batedor') {
+    abilityDefenseDebuff = 25 + Math.floor(Math.random() * 16);
+  } else if (selectedClass === 'Sentinela') {
+    abilityMultiplier = 50 + Math.floor(Math.random() * 21);
+  } else if (selectedClass === 'Sacerdote') {
+    abilityMultiplier = 10 + Math.floor(Math.random() * 21);
+    abilityAttackDebuff = 25 + Math.floor(Math.random() * 16);
+  } else if (selectedClass === 'Templário') {
+    abilityAttackBuff = 25 + Math.floor(Math.random() * 16);
+    abilityDefenseBuff = 25 + Math.floor(Math.random() * 16);
+  } else if (selectedClass === 'Espadachim') {
+    abilityMultiplier = 30 + Math.floor(Math.random() * 16);
+  } else if (selectedClass === 'Místico') {
+    abilityMultiplier = 30 + Math.floor(Math.random() * 16);
+  }
+
+  return {
+    class: selectedClass,
+    rarity: rarity,
+    trait: selectedTrait,
+    trait_value: traitValue,
+    max_hp: config.hp,
+    attack: config.attack,
+    defense: config.defense,
+    manaCost: config.manaCost,
+    ability_multiplier: abilityMultiplier,
+    ability_substat: abilitySubstat,
+    ability_defense_buff: abilityDefenseBuff,
+    ability_attack_buff: abilityAttackBuff,
+    ability_defense_debuff: abilityDefenseDebuff,
+    ability_attack_debuff: abilityAttackDebuff,
+    allowed_weapon_group: weaponGroups[Math.floor(Math.random() * weaponGroups.length)],
+    allowed_armor_group: armorGroups[Math.floor(Math.random() * armorGroups.length)],
+    ...substats,
+    isAdvanced: isAdvanced
+  };
+};
+
+export default function Recruitment() {
+  const [user, setUser] = useState(null);
+  const [generatedRecruit, setGeneratedRecruit] = useState(null);
+  const [customName, setCustomName] = useState("");
+  const [showNameDialog, setShowNameDialog] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    base44.auth.me().then(setUser).catch(() => {});
+  }, []);
+
+  const { data: characters } = useQuery({
+    queryKey: ['characters'],
+    queryFn: () => base44.entities.Character.list(),
+    initialData: [],
+  });
+
+
+
+  const myCharacters = characters.filter(c => c.created_by === user?.email);
+
+  const handleGenerateRecruit = async (isAdvanced) => {
+    if (myCharacters.length >= 8) return;
+    
+    if (isAdvanced) {
+      if ((user?.souls || 0) < 10) {
+        alert("Você precisa de 10 Almas para recrutamento avançado!");
+        return;
+      }
+      
+      // Deduct souls before generation
+      await base44.auth.updateMe({ souls: (user?.souls || 0) - 10 });
+      const newUser = await base44.auth.me(); // Fetch updated user data
+      setUser(newUser); // Update user state
+    }
+    
+    setIsGenerating(true);
+    await new Promise(resolve => setTimeout(resolve, 800));
+    
+    const recruit = generateRecruit(isAdvanced);
+    setGeneratedRecruit(recruit);
+    setIsGenerating(false);
+    setShowNameDialog(true);
+  };
+
+  const confirmRecruit = async () => {
+    if (!generatedRecruit || !customName.trim()) return;
+
+    const totalMana = 10 + (generatedRecruit.intelligence || 0);
+
+    const newChar = await base44.entities.Character.create({
+      name: customName.trim(),
+      class: generatedRecruit.class,
+      rarity: generatedRecruit.rarity,
+      ability: classConfig[generatedRecruit.class].ability,
+      ability_multiplier: generatedRecruit.ability_multiplier,
+      ability_substat: generatedRecruit.ability_substat,
+      ability_defense_buff: generatedRecruit.ability_defense_buff,
+      ability_attack_buff: generatedRecruit.ability_attack_buff,
+      ability_defense_debuff: generatedRecruit.ability_defense_debuff,
+      ability_attack_debuff: generatedRecruit.ability_attack_debuff,
+      trait: generatedRecruit.trait,
+      trait_value: generatedRecruit.trait_value || 0,
+      allowed_weapon_group: generatedRecruit.allowed_weapon_group,
+      allowed_armor_group: generatedRecruit.allowed_armor_group,
+      max_hp: generatedRecruit.max_hp,
+      max_mana: totalMana,
+      current_mana: totalMana,
+      attack: generatedRecruit.attack,
+      defense: generatedRecruit.defense,
+      strength: generatedRecruit.strength || 0,
+      intelligence: generatedRecruit.intelligence || 0,
+      dexterity: generatedRecruit.dexterity || 0,
+      vigor: generatedRecruit.vigor || 0,
+      wisdom: generatedRecruit.wisdom || 0,
+      agility: generatedRecruit.agility || 0,
+      level: 1,
+      experience: 0
+    });
+
+    const weaponTypes = {
+      heavy: ['spear', 'axe'],
+      magic: ['wand', 'scepter'],
+      fast: ['longbow', 'shortbow']
+    };
+    const armorTypes = {
+      heavy: 'heavy',
+      light: 'light',
+      magic: 'magic'
+    };
+
+    const weaponType = weaponTypes[generatedRecruit.allowed_weapon_group][0];
+    const armorGroup = armorTypes[generatedRecruit.allowed_armor_group];
+
+    const startingWeapon = await base44.entities.Inventory.create({
+      name: `${weaponType === 'spear' ? 'Lança' : weaponType === 'axe' ? 'Machado' : weaponType === 'wand' ? 'Varinha' : weaponType === 'scepter' ? 'Cetro' : weaponType === 'longbow' ? 'Arco Longo' : 'Arco Curto'} Iniciante`,
+      type: 'weapon',
+      weapon_group: generatedRecruit.allowed_weapon_group,
+      weapon_type: weaponType,
+      damage_modifier_min: 95,
+      damage_modifier_max: 105,
+      rarity: 'common',
+      level_requirement: 1,
+      primary_substat: weaponType === 'spear' || weaponType === 'axe' ? 'strength' : weaponType === 'wand' || weaponType === 'scepter' ? 'intelligence' : 'dexterity',
+      primary_substat_value: 1,
+      substats: [],
+      sell_price: 0
+    });
+
+    const startingArmor = await base44.entities.Inventory.create({
+      name: `${armorGroup === 'heavy' ? 'Armadura Pesada' : armorGroup === 'light' ? 'Armadura Leve' : 'Armadura Mágica'} Iniciante`,
+      type: 'armor',
+      armor_group: armorGroup,
+      rarity: 'common',
+      level_requirement: 1,
+      primary_substat: armorGroup === 'heavy' ? 'vigor' : armorGroup === 'light' ? 'agility' : 'wisdom',
+      primary_substat_value: 1,
+      substats: [],
+      sell_price: 0
+    });
+
+    await base44.entities.Character.update(newChar.id, {
+      equipped_weapon: startingWeapon.id,
+      equipped_armor: startingArmor.id
+    });
+
+    queryClient.invalidateQueries({ queryKey: ['characters'] });
+    queryClient.invalidateQueries({ queryKey: ['inventory'] });
+    setShowNameDialog(false);
+    setGeneratedRecruit(null);
+    setCustomName("");
+    
+    const newUser = await base44.auth.me();
+    setUser(newUser);
+  };
+
+  const getAbilityDescriptionWithValues = (recruit) => {
+    const abilityDesc = abilityDescriptions[classConfig[recruit.class].ability];
+    if (!abilityDesc) return '';
+    
+    let desc = abilityDesc.description;
+    desc = desc.replace('X', `${recruit.ability_multiplier}% (${substatNames[recruit.ability_substat]})`);
+    
+    if (recruit.ability_defense_buff) {
+      desc = desc.replace('Y', `${recruit.ability_defense_buff}`);
+    } else if (recruit.ability_attack_buff) {
+      desc = desc.replace('Y', `${recruit.ability_attack_buff}`);
+      if (recruit.ability_defense_buff) {
+        desc = desc.replace('Z', `${recruit.ability_defense_buff}`);
+      }
+    } else if (recruit.ability_defense_debuff) {
+      desc = desc.replace('Y', `${recruit.ability_defense_debuff}`);
+    } else if (recruit.ability_attack_debuff) {
+      desc = desc.replace('Y', `${recruit.ability_attack_debuff}`);
+    }
+    
+    return desc;
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-emerald-900 via-green-900 to-teal-900 p-4 md:p-8">
+      <div className="max-w-4xl mx-auto">
+        <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-3 mb-2">
+                <Users className="w-10 h-10 text-amber-400" />
+                <h1 className="text-4xl font-bold text-amber-100" style={{ fontFamily: 'serif' }}>
+                  Recrutamento
+                </h1>
+              </div>
+              <p className="text-emerald-300">Recrute novos guerreiros ({myCharacters.length}/8)</p>
+            </div>
+            <div className="bg-purple-900/30 border border-purple-700/50 rounded-lg px-6 py-3">
+              <div className="flex items-center gap-2">
+                <Ghost className="w-6 h-6 text-purple-400" />
+                <div>
+                  <p className="text-purple-300 text-xs">Almas</p>
+                  <p className="text-purple-100 font-bold text-2xl">{user?.souls || 0}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </motion.div>
+
+        {isGenerating ? (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="text-center py-20"
+          >
+            <motion.div
+              animate={{ rotate: 360 }}
+              transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+              className="inline-block mb-6"
+            >
+              <Sparkles className="w-16 h-16 text-amber-400" />
+            </motion.div>
+            <h2 className="text-3xl font-bold text-amber-100 mb-2" style={{ fontFamily: 'serif' }}>
+              Convocando Guerreiro...
+            </h2>
+            <p className="text-emerald-300">Procurando o combatente perfeito</p>
+          </motion.div>
+        ) : (
+          <div className="grid md:grid-cols-2 gap-6">
+            <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}>
+              <Card className="bg-gradient-to-br from-stone-900/90 to-stone-800/90 backdrop-blur-sm border-amber-700/30 h-full flex flex-col">
+                <CardHeader>
+                  <CardTitle className="text-amber-100 text-xl" style={{ fontFamily: 'serif' }}>
+                    Recrutamento Básico
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 flex-1 flex flex-col">
+                  <p className="text-emerald-300 text-sm">
+                    Recrute um guerreiro iniciante sem traço especial nem substatus iniciais.
+                  </p>
+                  <div className="bg-stone-950/50 rounded-lg p-3 border border-stone-700">
+                    <p className="text-amber-400 text-xs font-bold mb-2">Raridade:</p>
+                    <Badge className={rarityColors.common}>100% Comum</Badge>
+                  </div>
+                  <div className="bg-stone-950/50 rounded-lg p-3 border border-stone-700 flex-1">
+                    <p className="text-amber-400 text-xs font-bold mb-2">Classes Disponíveis:</p>
+                    <div className="space-y-1 text-sm text-amber-200">
+                      <p>• Guerreiro</p>
+                      <p>• Arqueiro</p>
+                      <p>• Mago</p>
+                    </div>
+                  </div>
+                  <Button
+                    onClick={() => handleGenerateRecruit(false)}
+                    disabled={myCharacters.length >= 8}
+                    className="w-full bg-gradient-to-r from-stone-600 to-stone-700 hover:from-stone-500 hover:to-stone-600 mt-auto"
+                  >
+                    Recrutar Básico (Grátis)
+                  </Button>
+                </CardContent>
+              </Card>
+            </motion.div>
+
+            <motion.div 
+              initial={{ opacity: 0, x: 20 }} 
+              animate={{ opacity: 1, x: 0 }}
+              whileHover={{ scale: 1.02 }}
+              transition={{ duration: 0.2 }}
+            >
+              <Card className="bg-gradient-to-br from-purple-900/30 to-purple-800/30 backdrop-blur-sm border-purple-500/50 h-full relative overflow-hidden">
+                <motion.div
+                  className="absolute inset-0 bg-gradient-to-r from-purple-500/10 via-pink-500/10 to-purple-500/10"
+                  animate={{ x: ['-100%', '100%'] }}
+                  transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
+                />
+                <motion.div
+                  className="absolute top-0 right-0 w-20 h-20 bg-purple-400/20 rounded-full blur-2xl"
+                  animate={{ scale: [1, 1.2, 1], opacity: [0.3, 0.6, 0.3] }}
+                  transition={{ duration: 2, repeat: Infinity }}
+                />
+                <motion.div
+                  className="absolute bottom-0 left-0 w-16 h-16 bg-pink-400/20 rounded-full blur-2xl"
+                  animate={{ scale: [1.2, 1, 1.2], opacity: [0.4, 0.2, 0.4] }}
+                  transition={{ duration: 2.5, repeat: Infinity }}
+                />
+                <CardHeader className="relative z-10">
+                  <CardTitle className="text-amber-100 text-2xl flex items-center gap-2" style={{ fontFamily: 'serif' }}>
+                    <motion.div
+                      animate={{ rotate: [0, 360] }}
+                      transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
+                    >
+                      <Sparkles className="w-6 h-6 text-purple-400" />
+                    </motion.div>
+                    Recrutamento Avançado
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4 relative z-10">
+                  <p className="text-purple-200 text-sm">
+                    Recrute um guerreiro experiente com traço especial e substatus iniciais.
+                  </p>
+                  <div className="bg-purple-900/40 rounded-lg p-3 border border-purple-600/50">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Ghost className="w-4 h-4 text-purple-300" />
+                      <p className="text-purple-300 text-xs font-bold">Custo:</p>
+                    </div>
+                    <p className="text-purple-100 font-bold">10 Almas</p>
+                  </div>
+                  <div className="bg-stone-950/50 rounded-lg p-4 border border-purple-700/50">
+                    <p className="text-purple-300 text-xs font-bold mb-2">Raridades:</p>
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-sm">
+                        <Badge className={rarityColors.uncommon + " text-xs"}>Incomum</Badge>
+                        <span className="text-purple-200">75%</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <Badge className={rarityColors.rare + " text-xs"}>Raro</Badge>
+                        <span className="text-purple-200">24%</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <Badge className={rarityColors.epic + " text-xs"}>Épico</Badge>
+                        <span className="text-purple-200">1%</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="bg-stone-950/50 rounded-lg p-4 border border-purple-700/50">
+                    <p className="text-purple-300 text-xs font-bold mb-2">Classes:</p>
+                    <div className="space-y-1 text-xs text-purple-200">
+                      <p>• Guarda, Bruxo, Batedor (Incomum)</p>
+                      <p>• Sentinela, Sacerdote, Templário (Raro)</p>
+                      <p>• Espadachim, Místico (Épico)</p>
+                    </div>
+                  </div>
+                  <Button
+                    onClick={() => handleGenerateRecruit(true)}
+                    disabled={myCharacters.length >= 8 || (user?.souls || 0) < 10}
+                    className="w-full bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-500 hover:to-purple-600 disabled:opacity-40"
+                  >
+                    {(user?.souls || 0) < 10 ? 'Almas Insuficientes' : 'Recrutar Avançado (10 Almas)'}
+                  </Button>
+                </CardContent>
+              </Card>
+            </motion.div>
+          </div>
+        )}
+      </div>
+
+      <AlertDialog open={showNameDialog} onOpenChange={setShowNameDialog}>
+        <AlertDialogContent className="bg-stone-900 border-amber-800/30 max-w-2xl max-h-[90vh] overflow-y-auto">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-amber-100 text-2xl">
+              Guerreiro Convocado!
+            </AlertDialogTitle>
+          </AlertDialogHeader>
+          
+          {generatedRecruit && (
+            <div className="space-y-4">
+              <motion.div
+                initial={{ scale: 0.8, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ duration: 0.5 }}
+              >
+                <Card className="bg-gradient-to-br from-stone-900/80 to-stone-800/80 backdrop-blur-sm border-amber-700/30 overflow-hidden relative">
+                  {generatedRecruit.rarity === 'epic' && (
+                    <motion.div
+                      className="absolute inset-0 bg-gradient-to-r from-purple-500/20 via-pink-500/20 to-purple-500/20 pointer-events-none"
+                      animate={{ x: ['-100%', '100%'] }}
+                      transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                    />
+                  )}
+                  {generatedRecruit.rarity === 'rare' && (
+                    <motion.div
+                      className="absolute inset-0 bg-gradient-to-r from-blue-500/15 via-cyan-500/15 to-blue-500/15 pointer-events-none"
+                      animate={{ x: ['-100%', '100%'] }}
+                      transition={{ duration: 2.5, repeat: Infinity, ease: "linear" }}
+                    />
+                  )}
+                  {generatedRecruit.rarity === 'uncommon' && (
+                    <motion.div
+                      className="absolute top-0 left-0 w-16 h-16 bg-green-400/10 rounded-full blur-xl"
+                      animate={{ scale: [1, 1.3, 1], opacity: [0.3, 0.5, 0.3] }}
+                      transition={{ duration: 2, repeat: Infinity }}
+                    />
+                  )}
+                  <div className={`h-2 bg-gradient-to-r ${classConfig[generatedRecruit.class].color} relative z-10`} />
+                  
+                  <CardContent className="pt-6 space-y-4">
+                    <div className="flex items-center justify-center mb-4 bg-stone-950/50 rounded-lg p-4 border border-stone-700">
+                      <motion.div animate={{ y: [0, -3, 0] }} transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}>
+                        <PixelWarrior playerNumber={1} charClass={generatedRecruit.class} />
+                      </motion.div>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        {React.createElement(classConfig[generatedRecruit.class].icon, { className: "w-6 h-6 text-amber-400" })}
+                        <span className="text-xl text-amber-100">{generatedRecruit.class}</span>
+                      </div>
+                      <Badge className={rarityColors[generatedRecruit.rarity]}>{rarityNames[generatedRecruit.rarity]}</Badge>
+                    </div>
+
+                    {abilityDescriptions[classConfig[generatedRecruit.class].ability] && (
+                      <div className="bg-purple-900/30 rounded-lg p-3 border border-purple-700/50">
+                        <p className="text-purple-300 font-bold text-sm mb-1">
+                          Habilidade: {abilityDescriptions[classConfig[generatedRecruit.class].ability].name}
+                        </p>
+                        <p className="text-purple-200 text-xs mb-1">
+                          {getAbilityDescriptionWithValues(generatedRecruit)}
+                        </p>
+                        <p className="text-cyan-400 text-xs">Custo: {generatedRecruit.manaCost} Mana</p>
+                      </div>
+                    )}
+
+                    <AptitudeDisplay 
+                      weaponGroup={generatedRecruit.allowed_weapon_group} 
+                      armorGroup={generatedRecruit.allowed_armor_group}
+                    />
+
+                    <div className="grid grid-cols-4 gap-2">
+                      <div className="bg-red-900/30 rounded-lg p-3 border border-red-700/50 text-center">
+                        <Heart className="w-5 h-5 text-red-400 mx-auto mb-1" />
+                        <p className="text-red-100 font-bold text-lg">{generatedRecruit.max_hp}</p>
+                        <p className="text-red-300 text-xs">Vida</p>
+                      </div>
+                      <div className="bg-cyan-900/30 rounded-lg p-3 border border-cyan-700/50 text-center">
+                        <Sparkles className="w-5 h-5 text-cyan-400 mx-auto mb-1" />
+                        <p className="text-cyan-100 font-bold text-lg">{10 + (generatedRecruit.intelligence || 0)}</p>
+                        <p className="text-cyan-300 text-xs">Mana</p>
+                      </div>
+                      <div className="bg-orange-900/30 rounded-lg p-3 border border-orange-700/50 text-center">
+                        <Sword className="w-5 h-5 text-orange-400 mx-auto mb-1" />
+                        <p className="text-orange-100 font-bold text-lg">{generatedRecruit.attack}</p>
+                        <p className="text-orange-300 text-xs">Ataque</p>
+                      </div>
+                      <div className="bg-blue-900/30 rounded-lg p-3 border border-blue-700/50 text-center">
+                        <Shield className="w-5 h-5 text-blue-400 mx-auto mb-1" />
+                        <p className="text-blue-100 font-bold text-lg">{generatedRecruit.defense}</p>
+                        <p className="text-blue-300 text-xs">Defesa</p>
+                      </div>
+                    </div>
+
+                    {generatedRecruit.isAdvanced && (
+                      <div className="bg-stone-950/50 rounded-lg p-3 border border-stone-700">
+                        <p className="text-amber-400 text-xs font-bold mb-2">Substatus Iniciais:</p>
+                        <div className="grid grid-cols-3 gap-1 text-xs">
+                          {['strength', 'intelligence', 'dexterity', 'vigor', 'wisdom', 'agility'].map(stat => (
+                            <div key={stat} className="text-center">
+                              <p className="text-stone-400">{substatNames[stat]}</p>
+                              <p className={`font-bold ${substatColors[stat]}`}>{generatedRecruit[stat]}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+<div className="bg-purple-900/30 rounded-lg p-3 border border-purple-700/50">
+  <p className="text-purple-300 font-bold text-xs mb-1">🔒 Traço Oculto</p>
+  <p className="text-purple-200 text-xs">Será revelado ao atingir nível 30</p>
+</div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+
+              <div className="space-y-2">
+                <label className="text-amber-200 text-sm font-medium">Nome do Personagem</label>
+                <Input
+                  value={customName}
+                  onChange={(e) => setCustomName(e.target.value)}
+                  placeholder="Digite um nome..."
+                  className="bg-stone-800 border-amber-900/50 text-amber-100"
+                />
+              </div>
+            </div>
+          )}
+
+          <AlertDialogFooter>
+            <AlertDialogCancel className="bg-stone-800 text-amber-100 border-amber-900/50">
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmRecruit}
+              disabled={!customName.trim()}
+              className="bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-500 hover:to-purple-600 disabled:opacity-40"
+            >
+              Confirmar Recrutamento
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
