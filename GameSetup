@@ -1,0 +1,169 @@
+import React, { useState } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Plus, Play, Clock } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
+
+export default function GameSetup({ games, onCreateGame, onSelectGame, isLoading }) {
+  const [showNewGame, setShowNewGame] = useState(false);
+  const [player1Name, setPlayer1Name] = useState("");
+  const [player2Name, setPlayer2Name] = useState("");
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (player1Name.trim() && player2Name.trim()) {
+      onCreateGame(player1Name.trim(), player2Name.trim());
+      setPlayer1Name("");
+      setPlayer2Name("");
+      setShowNewGame(false);
+    }
+  };
+
+  const activeGames = games.filter(g => g.status === "active");
+  const finishedGames = games.filter(g => g.status === "finished");
+
+  return (
+    <div className="grid md:grid-cols-2 gap-6">
+      <motion.div
+        initial={{ opacity: 0, x: -20 }}
+        animate={{ opacity: 1, x: 0 }}
+      >
+        <Card className="bg-white/10 backdrop-blur-sm border-white/20">
+          <CardHeader>
+            <CardTitle className="text-white flex items-center justify-between">
+              Novo Jogo
+              <Button
+                onClick={() => setShowNewGame(!showNewGame)}
+                size="sm"
+                className="bg-cyan-500 hover:bg-cyan-600"
+              >
+                <Plus className="w-4 h-4 mr-1" />
+                Criar
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <AnimatePresence mode="wait">
+              {showNewGame ? (
+                <motion.form
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  onSubmit={handleSubmit}
+                  className="space-y-4"
+                >
+                  <div className="space-y-2">
+                    <Label htmlFor="player1" className="text-cyan-200">
+                      Jogador 1
+                    </Label>
+                    <Input
+                      id="player1"
+                      value={player1Name}
+                      onChange={(e) => setPlayer1Name(e.target.value)}
+                      placeholder="Digite o nome"
+                      className="bg-white/10 border-white/20 text-white placeholder:text-white/40"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="player2" className="text-cyan-200">
+                      Jogador 2
+                    </Label>
+                    <Input
+                      id="player2"
+                      value={player2Name}
+                      onChange={(e) => setPlayer2Name(e.target.value)}
+                      placeholder="Digite o nome"
+                      className="bg-white/10 border-white/20 text-white placeholder:text-white/40"
+                      required
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setShowNewGame(false)}
+                      className="flex-1 bg-white/5 text-white border-white/20 hover:bg-white/10"
+                    >
+                      Cancelar
+                    </Button>
+                    <Button
+                      type="submit"
+                      className="flex-1 bg-green-500 hover:bg-green-600"
+                    >
+                      Iniciar Batalha
+                    </Button>
+                  </div>
+                </motion.form>
+              ) : (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="text-center py-8"
+                >
+                  <div className="w-16 h-16 mx-auto mb-4 bg-cyan-500/20 rounded-full flex items-center justify-center">
+                    <Plus className="w-8 h-8 text-cyan-300" />
+                  </div>
+                  <p className="text-cyan-200">
+                    Clique em "Criar" para começar um novo jogo
+                  </p>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </CardContent>
+        </Card>
+      </motion.div>
+
+      <motion.div
+        initial={{ opacity: 0, x: 20 }}
+        animate={{ opacity: 1, x: 0 }}
+      >
+        <Card className="bg-white/10 backdrop-blur-sm border-white/20">
+          <CardHeader>
+            <CardTitle className="text-white">Jogos Ativos</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {isLoading ? (
+              <div className="text-center py-8 text-cyan-200">
+                Carregando...
+              </div>
+            ) : activeGames.length === 0 ? (
+              <div className="text-center py-8">
+                <Clock className="w-12 h-12 mx-auto mb-2 text-cyan-400/50" />
+                <p className="text-cyan-200">Nenhum jogo ativo</p>
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {activeGames.map((game) => (
+                  <motion.button
+                    key={game.id}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => onSelectGame(game)}
+                    className="w-full bg-white/5 hover:bg-white/10 border border-white/20 rounded-lg p-3 text-left transition-all"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-white font-medium">
+                          {game.player1_name} vs {game.player2_name}
+                        </p>
+                        <p className="text-cyan-300 text-xs">
+                          Turno: {game[`${game.current_turn}_name`]}
+                        </p>
+                      </div>
+                      <Play className="w-5 h-5 text-cyan-400" />
+                    </div>
+                  </motion.button>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </motion.div>
+    </div>
+  );
+}
