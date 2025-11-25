@@ -1,0 +1,201 @@
+import React from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Scroll, ArrowDown, Zap, Plus, Ban, Sword, Shield as ShieldIcon, Droplet, Flame } from "lucide-react";
+import { motion } from "framer-motion";
+import { Badge } from "@/components/ui/badge";
+
+const effects = [
+  {
+    name: "Regeneração",
+    type: "buff",
+    icon: Plus,
+    color: "from-green-600 to-green-700",
+    description: "Recupera HP a cada turno",
+    duration: "X turnos",
+    value: "X HP por turno"
+  },
+  {
+    name: "Aumento de Ataque",
+    type: "buff",
+    icon: Sword,
+    color: "from-red-600 to-red-700",
+    description: "Aumenta o ataque do alvo",
+    duration: "X turnos",
+    value: "+X% de ataque"
+  },
+  {
+    name: "Aumento de Defesa",
+    type: "buff",
+    icon: ShieldIcon,
+    color: "from-cyan-600 to-cyan-700",
+    description: "Aumenta a defesa do alvo",
+    duration: "X turnos",
+    value: "+X% de defesa"
+  },
+  {
+    name: "Redução de Ataque",
+    type: "debuff",
+    icon: ArrowDown,
+    color: "from-orange-600 to-orange-700",
+    description: "Reduz o ataque do alvo",
+    duration: "X turnos",
+    value: "-X% de ataque"
+  },
+  {
+    name: "Redução de Defesa",
+    type: "debuff",
+    icon: ArrowDown,
+    color: "from-blue-600 to-blue-700",
+    description: "Reduz a defesa do alvo",
+    duration: "X turnos",
+    value: "-X% de defesa"
+  },
+  {
+    name: "Atordoado",
+    type: "debuff",
+    icon: Zap,
+    color: "from-yellow-600 to-yellow-700",
+    description: "O alvo não pode atacar no próximo turno, mas pode se mover. Efeito ativo no turno seguinte ao acerto.",
+    duration: "X turnos",
+    value: "Bloqueia ataque"
+  },
+  {
+    name: "Imobilizado",
+    type: "debuff",
+    icon: Ban,
+    color: "from-gray-600 to-gray-700",
+    description: "O alvo não pode se mover no próximo turno. Efeito ativo no turno seguinte ao acerto.",
+    duration: "X turnos",
+    value: "Bloqueia movimento"
+  },
+  {
+    name: "Envenenado",
+    type: "debuff",
+    icon: Droplet,
+    color: "from-purple-600 to-purple-700",
+    description: "Causa dano contínuo a cada turno",
+    duration: "X turnos",
+    value: "X de dano por turno"
+  },
+  {
+    name: "Queimadura",
+    type: "debuff",
+    icon: Flame,
+    color: "from-red-600 to-red-700",
+    description: "Causa dano de fogo contínuo ao pisar em blocos queimados",
+    duration: "X turnos",
+    value: "X de dano por turno"
+  }
+];
+
+const EffectCard = ({ effect }) => {
+  const Icon = effect.icon;
+  
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.9 }}
+      animate={{ opacity: 1, scale: 1 }}
+      whileHover={{ scale: 1.02 }}
+    >
+      <Card className="bg-gradient-to-br from-stone-900/80 to-stone-800/80 backdrop-blur-sm border-amber-700/30 overflow-hidden hover:shadow-xl hover:shadow-amber-500/20 transition-all duration-300">
+        <div className={`h-2 bg-gradient-to-r ${effect.color}`} />
+        
+        <CardHeader>
+          <div className="flex items-start justify-between">
+            <div className="flex items-center gap-3">
+              <div className={`w-12 h-12 rounded-lg flex items-center justify-center bg-gradient-to-br ${effect.color}`}>
+                <Icon className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <CardTitle className="text-amber-100 text-lg">{effect.name}</CardTitle>
+                <Badge className={effect.type === 'buff' ? 'bg-green-600' : 'bg-red-600'}>
+                  {effect.type === 'buff' ? 'Buff' : 'Debuff'}
+                </Badge>
+              </div>
+            </div>
+          </div>
+        </CardHeader>
+
+        <CardContent className="space-y-3">
+          <p className="text-amber-300 text-sm">{effect.description}</p>
+          
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-stone-950/50 rounded p-2 border border-stone-700">
+              <p className="text-stone-400 text-xs mb-1">Duração</p>
+              <p className="text-amber-200 font-bold text-sm">{effect.duration}</p>
+            </div>
+            <div className="bg-stone-950/50 rounded p-2 border border-stone-700">
+              <p className="text-stone-400 text-xs mb-1">Valor</p>
+              <p className="text-emerald-300 font-bold text-sm">{effect.value}</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+};
+
+export default function Effects() {
+  const buffs = effects.filter(e => e.type === 'buff');
+  const debuffs = effects.filter(e => e.type === 'debuff');
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-emerald-900 via-green-900 to-teal-900 p-4 md:p-8">
+      <div className="max-w-7xl mx-auto">
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-8"
+        >
+          <div className="flex items-center gap-3 mb-2">
+            <Scroll className="w-10 h-10 text-amber-400" />
+            <h1 className="text-4xl font-bold text-amber-100" style={{ fontFamily: 'serif' }}>
+              Efeitos de Combate
+            </h1>
+          </div>
+          <p className="text-emerald-300">Buffs e debuffs do sistema de batalha</p>
+        </motion.div>
+
+        <div className="space-y-8">
+          <div>
+            <h2 className="text-2xl font-bold text-green-400 mb-4 flex items-center gap-2">
+              <Plus className="w-6 h-6" />
+              Buffs (Efeitos Positivos)
+            </h2>
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {buffs.map((effect, index) => (
+                <motion.div
+                  key={effect.name}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: index * 0.1 }}
+                >
+                  <EffectCard effect={effect} />
+                </motion.div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <h2 className="text-2xl font-bold text-red-400 mb-4 flex items-center gap-2">
+              <ArrowDown className="w-6 h-6" />
+              Debuffs (Efeitos Negativos)
+            </h2>
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {debuffs.map((effect, index) => (
+                <motion.div
+                  key={effect.name}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: index * 0.1 }}
+                >
+                  <EffectCard effect={effect} />
+                </motion.div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
