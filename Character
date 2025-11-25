@@ -1,0 +1,719 @@
+import React, { useState, useEffect } from "react";
+import { base44 } from "@/api/base44Client";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Sword, Shield, Heart, Target, Flame, TrendingUp, Trash2, X, Sparkles, ArrowLeft, Zap, Eye, Cross, Crown, Wind, Crosshair, BarChart3 } from "lucide-react";
+import { motion } from "framer-motion";
+import ItemCard from "../components/rpg/ItemCard";
+import { calculateTotalStats } from "../components/rpg/StatsCalculator";
+import ClassEvolution from "../components/character/ClassEvolution";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import AptitudeDisplay from "../components/rpg/AptitudeDisplay";
+import { abilityDescriptions } from "../components/rpg/AbilityDescriptions";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import PixelCharacter from "../components/rpg/PixelWarrior";
+import WeaponPatternTooltip from "../components/rpg/WeaponPatternTooltip";
+import ProgressionCharts from "../components/character/ProgressionCharts";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+
+const traitConfig = {
+  strong: { name: "Forte", stat: "strength", desc: "Aumenta Força", icon: Sword, color: "text-orange-400" },
+  healthy: { name: "Saudável", stat: "vigor", desc: "Aumenta Vigor", icon: Heart, color: "text-red-400" },
+  ambidextrous: { name: "Ambidestro", stat: "dexterity", desc: "Aumenta Destreza", icon: Crosshair, color: "text-green-400" },
+  agile: { name: "Ágil", stat: "agility", desc: "Aumenta Agilidade", icon: Zap, color: "text-green-400" },
+  intelligent: { name: "Inteligente", stat: "intelligence", desc: "Aumenta Inteligência", icon: Sparkles, color: "text-blue-400" },
+  wise: { name: "Sábio", stat: "wisdom", desc: "Aumenta Sabedoria", icon: Shield, color: "text-blue-400" },
+  precise: { name: "Preciso", stat: null, desc: "+5% Chance Crítico e +20% Dano Crítico", icon: Target, color: "text-yellow-400" },
+  quick_reflex: { name: "Reflexo Rápido", stat: null, desc: "+5% Esquiva e +8% Resiliência", icon: Zap, color: "text-cyan-400" }
+};
+
+const statInfo = {
+  strength: { 
+    name: "Força", 
+    icon: Sword,
+    desc: "+0.5 Ataque (Arma Pesada/Sem Arma) | +0.6% Dano Crítico", 
+    color: "text-orange-400" 
+  },
+  vigor: { 
+    name: "Vigor", 
+    icon: Heart,
+    desc: "+1 Vida | +0.5 Defesa (Armadura Pesada)", 
+    color: "text-orange-400" 
+  },
+  intelligence: { 
+    name: "Inteligência", 
+    icon: Sparkles,
+    desc: "+0.5 Ataque (Arma Mágica) | +1 Mana", 
+    color: "text-blue-400" 
+  },
+  wisdom: { 
+    name: "Sabedoria", 
+    icon: Shield,
+    desc: "+0.5 Defesa (Arm. Mágica) | +0.2% Resiliência | +0.5% Recompensas", 
+    color: "text-blue-400" 
+  },
+  dexterity: { 
+    name: "Destreza", 
+    icon: Target,
+    desc: "+0.5 Ataque (Arma Rápida) | +0.1% Chance Crítico", 
+    color: "text-green-400" 
+  },
+  agility: { 
+    name: "Agilidade", 
+    icon: Zap,
+    desc: "+0.5 Defesa (Armadura Leve) | +0.1% Esquiva", 
+    color: "text-green-400" 
+  }
+};
+
+const classIcons = { 
+  Guerreiro: Sword, 
+  Arqueiro: Target, 
+  Mago: Flame, 
+  Guarda: Shield, 
+  Bruxo: Wind, 
+  Batedor: Target,
+  Sentinela: Eye,
+  Sacerdote: Cross,
+  Templário: Crown,
+  Espadachim: Sword,
+  Místico: Sparkles
+};
+
+const statNames = { strength: "FOR", intelligence: "INT", dexterity: "DES", vigor: "VIG", wisdom: "SAB", agility: "AGI" };
+
+const getExpRequired = (level) => {
+  if (level === 1) return 30;
+  return Math.floor(getExpRequired(level - 1) * 1.22);
+};
+
+const getAbilityDescriptionWithValues = (char) => {
+  const abilityDesc = abilityDescriptions[char.ability];
+  if (!abilityDesc) return '';
+  
+  let desc = abilityDesc.description;
+  desc = desc.replace('X', `${char.ability_multiplier || 0}% (${statNames[char.ability_substat] || ''})`);
+  
+  if (char.ability_defense_buff) {
+    desc = desc.replace('Y', `${char.ability_defense_buff}`);
+    if (char.ability_attack_buff) {
+      desc = desc.replace('Z', `${char.ability_defense_buff}`);
+    }
+  } else if (char.ability_attack_buff) {
+    desc = desc.replace('Y', `${char.ability_attack_buff}`);
+    if (desc.includes('Z')) {
+      desc = desc.replace('Z', `${char.ability_defense_buff || char.ability_attack_buff}`);
+    }
+  } else if (char.ability_defense_debuff) {
+    desc = desc.replace('Y', `${char.ability_defense_debuff}`);
+  } else if (char.ability_attack_debuff) {
+    desc = desc.replace('Y', `${char.ability_attack_debuff}`);
+  }
+  
+  return desc;
+};
+
+export default function Character() {
+  const [selectedChar, setSelectedChar] = useState(null);
+  const [user, setUser] = useState(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [charToDelete, setCharToDelete] = useState(null);
+  const [activeTab, setActiveTab] = useState("stats");
+
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    base44.auth.me().then(setUser).catch(() => {});
+  }, []);
+
+  const { data: characters } = useQuery({
+    queryKey: ['characters'],
+    queryFn: () => base44.entities.Character.list(),
+    initialData: [],
+  });
+
+  const { data: inventory } = useQuery({
+    queryKey: ['inventory'],
+    queryFn: () => base44.entities.Inventory.list(),
+    initialData: [],
+  });
+
+  const updateCharacterMutation = useMutation({
+    mutationFn: ({ id, data }) => base44.entities.Character.update(id, data),
+    onSuccess: (updatedChar) => {
+      queryClient.invalidateQueries({ queryKey: ['characters'] });
+      setSelectedChar(updatedChar);
+    },
+  });
+
+  const deleteCharacterMutation = useMutation({
+    mutationFn: (id) => base44.entities.Character.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['characters'] });
+      setSelectedChar(null);
+      setDeleteDialogOpen(false);
+    },
+  });
+
+  const myCharacters = characters.filter(c => c.created_by === user?.email);
+  const userInventory = inventory.filter(i => i.created_by === user?.email);
+
+  const handleLevelUp = () => {
+    if (!selectedChar) return;
+    
+    const expRequired = getExpRequired(selectedChar.level);
+    if (selectedChar.experience < expRequired) {
+      alert("Experiência insuficiente para subir de nível!");
+      return;
+    }
+
+    const substatKeys = ['strength', 'intelligence', 'dexterity', 'vigor', 'wisdom', 'agility'];
+    
+    let updates = { ...selectedChar };
+    substatKeys.forEach(stat => {
+      const randomGain = 1 + Math.floor(Math.random() * 5);
+      updates[stat] = (updates[stat] || 0) + randomGain;
+    });
+
+    const newLevel = selectedChar.level + 1;
+    const newExp = selectedChar.experience - expRequired;
+
+    updateCharacterMutation.mutate({ 
+      id: selectedChar.id, 
+      data: { 
+        strength: updates.strength,
+        intelligence: updates.intelligence,
+        dexterity: updates.dexterity,
+        vigor: updates.vigor,
+        wisdom: updates.wisdom,
+        agility: updates.agility,
+        level: newLevel, 
+        experience: newExp
+      } 
+    });
+  };
+
+  const handleEquip = (item) => {
+    if (!selectedChar) return;
+
+    const slotMap = {
+      weapon: 'equipped_weapon',
+      armor: 'equipped_armor',
+      helmet: 'equipped_helmet',
+      boots: 'equipped_boots',
+      amulet: 'equipped_amulet'
+    };
+
+    const slot = slotMap[item.type];
+    if (!slot) return;
+
+    if (item.type === 'weapon' && item.weapon_group !== selectedChar.allowed_weapon_group) {
+      alert("Este personagem não pode equipar este tipo de arma!");
+      return;
+    }
+
+    if ((item.type === 'armor' || item.type === 'helmet' || item.type === 'boots') && 
+        item.armor_group !== selectedChar.allowed_armor_group) {
+      alert("Este personagem não pode equipar este tipo de armadura!");
+      return;
+    }
+
+    if (item.level_requirement > selectedChar.level) {
+      alert(`Nível ${item.level_requirement} necessário!`);
+      return;
+    }
+
+    updateCharacterMutation.mutate({
+      id: selectedChar.id,
+      data: { [slot]: item.id }
+    });
+  };
+
+  const handleUnequip = (slotName) => {
+    if (!selectedChar) return;
+    updateCharacterMutation.mutate({
+      id: selectedChar.id,
+      data: { [slotName]: null }
+    });
+  };
+
+  const handleDeleteClick = (char) => {
+    setCharToDelete(char);
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDelete = () => {
+    if (charToDelete) {
+      deleteCharacterMutation.mutate(charToDelete.id);
+    }
+  };
+
+  if (!selectedChar) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-emerald-900 via-green-900 to-teal-900 p-4 md:p-8">
+        <div className="max-w-7xl mx-auto">
+          <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
+            <h1 className="text-4xl font-bold text-amber-100 mb-2" style={{ fontFamily: 'serif' }}>
+              Meus Personagens
+            </h1>
+            <p className="text-emerald-300">Gerencie seus heróis</p>
+          </motion.div>
+
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {myCharacters.map((char, index) => {
+              const Icon = classIcons[char.class] || Sword;
+              const stats = calculateTotalStats(char, userInventory);
+              const expRequired = getExpRequired(char.level);
+              const expProgress = (char.experience / expRequired) * 100;
+
+              return (
+                <motion.div
+                  key={char.id}
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: index * 0.1 }}
+                >
+                  <Card className="bg-gradient-to-br from-stone-900/90 to-stone-800/90 backdrop-blur-sm border-amber-700/30 hover:shadow-xl hover:shadow-amber-500/20 transition-all duration-300 cursor-pointer"
+                    onClick={() => setSelectedChar(char)}>
+                    <CardHeader>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <Icon className="w-6 h-6 text-amber-400" />
+                          <CardTitle className="text-amber-100">{char.name}</CardTitle>
+                        </div>
+                        <Badge className="bg-amber-600">Lv {char.level}</Badge>
+                      </div>
+                      <div className="flex justify-center py-3 bg-stone-950/50 rounded-lg border border-stone-700 mt-2">
+                        <PixelCharacter playerNumber={1} charClass={char.class} />
+                      </div>
+                      <p className="text-emerald-400 text-sm text-center">{char.class}</p>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="grid grid-cols-4 gap-2">
+                        <div className="bg-red-900/30 rounded p-2 text-center border border-red-700/50">
+                          <Heart className="w-4 h-4 text-red-400 mx-auto mb-1" />
+                          <p className="text-red-100 text-sm font-bold">{stats.hp}</p>
+                        </div>
+                        <div className="bg-cyan-900/30 rounded p-2 text-center border border-cyan-700/50">
+                          <Sparkles className="w-4 h-4 text-cyan-400 mx-auto mb-1" />
+                          <p className="text-cyan-100 text-sm font-bold">{stats.mana}</p>
+                        </div>
+                        <div className="bg-orange-900/30 rounded p-2 text-center border border-orange-700/50">
+                          <Sword className="w-4 h-4 text-orange-400 mx-auto mb-1" />
+                          <p className="text-orange-100 text-sm font-bold">{stats.attack}</p>
+                        </div>
+                        <div className="bg-blue-900/30 rounded p-2 text-center border border-blue-700/50">
+                          <Shield className="w-4 h-4 text-blue-400 mx-auto mb-1" />
+                          <p className="text-blue-100 text-sm font-bold">{stats.defense}</p>
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="flex justify-between items-center mb-1">
+                          <p className="text-amber-400 text-xs">EXP</p>
+                          <p className="text-amber-300 text-xs">{char.experience}/{expRequired}</p>
+                        </div>
+                        <div className="w-full bg-stone-900 rounded-full h-2 overflow-hidden border border-stone-700">
+                          <div 
+                            className="h-full bg-gradient-to-r from-amber-500 to-yellow-500 transition-all duration-300"
+                            style={{ width: `${expProgress}%` }}
+                          />
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </motion.div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const stats = calculateTotalStats(selectedChar, userInventory);
+  const Icon = classIcons[selectedChar.class] || Sword;
+  const expRequired = getExpRequired(selectedChar.level);
+  const expProgress = (selectedChar.experience / expRequired) * 100;
+  const canLevelUp = selectedChar.experience >= expRequired;
+
+  const equippedItems = {
+    weapon: userInventory.find(i => i.id === selectedChar.equipped_weapon),
+    armor: userInventory.find(i => i.id === selectedChar.equipped_armor),
+    helmet: userInventory.find(i => i.id === selectedChar.equipped_helmet),
+    boots: userInventory.find(i => i.id === selectedChar.equipped_boots),
+    amulet: userInventory.find(i => i.id === selectedChar.equipped_amulet)
+  };
+
+  const availableWeapons = userInventory.filter(i => i.type === 'weapon' && i.weapon_group === selectedChar.allowed_weapon_group && i.id !== selectedChar.equipped_weapon);
+  const availableOtherItems = userInventory.filter(i => 
+    i.type !== 'weapon' && 
+    (i.type === 'amulet' || (i.type !== 'weapon' && i.armor_group === selectedChar.allowed_armor_group)) &&
+    i.id !== selectedChar.equipped_armor &&
+    i.id !== selectedChar.equipped_helmet &&
+    i.id !== selectedChar.equipped_boots &&
+    i.id !== selectedChar.equipped_amulet
+  );
+
+  const substatNames = { strength: "FOR", intelligence: "INT", dexterity: "DES", vigor: "VIG", wisdom: "SAB", agility: "AGI" };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-emerald-900 via-green-900 to-teal-900 p-4 md:p-8">
+      <div className="max-w-7xl mx-auto">
+        <div className="flex items-center gap-4 mb-6">
+          <Button variant="outline" onClick={() => setSelectedChar(null)} className="bg-stone-900/50 text-amber-100 border-amber-700/50">
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Voltar
+          </Button>
+          <div className="flex-1 flex flex-col items-center justify-center text-center mt-8">
+            <div className="flex items-center justify-center gap-3 mb-3">
+              <Icon className="w-8 h-8 text-amber-400" />
+              <h1 className="text-3xl font-bold text-amber-100" style={{ fontFamily: 'serif' }}>
+                {selectedChar.name}
+              </h1>
+              <Badge className="bg-amber-600">Nv {selectedChar.level}</Badge>
+            </div>
+            <div className="flex justify-center py-3 px-6 bg-stone-950/50 rounded-lg border border-stone-700 mb-2">
+              <PixelCharacter playerNumber={1} charClass={selectedChar.class} />
+            </div>
+            <p className="text-emerald-400 text-lg">{selectedChar.class}</p>
+          </div>
+          <Button variant="destructive" onClick={() => handleDeleteClick(selectedChar)}>
+            <Trash2 className="w-4 h-4 mr-2" />
+            Deletar
+          </Button>
+        </div>
+
+        <div className="grid lg:grid-cols-3 gap-4">
+          <div className="lg:col-span-1 space-y-4">
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+              <TabsList className="bg-stone-900/50 border border-amber-800/30 mb-4 w-full">
+                <TabsTrigger value="stats" className="flex-1 data-[state=active]:bg-amber-700">
+                  <Shield className="w-4 h-4 mr-2" />
+                  Status
+                </TabsTrigger>
+                <TabsTrigger value="charts" className="flex-1 data-[state=active]:bg-purple-700">
+                  <BarChart3 className="w-4 h-4 mr-2" />
+                  Progressão
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="stats" className="mt-0">
+                <Card className="bg-stone-900/60 backdrop-blur-sm border-amber-800/30">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-amber-100 text-lg">Status</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="bg-red-900/30 rounded-lg p-2 border border-red-700/50">
+                    <Heart className="w-4 h-4 text-red-400 mb-1" />
+                    <p className="text-red-100 font-bold text-lg">{stats.hp}</p>
+                    <p className="text-red-300 text-xs">Vida</p>
+                  </div>
+                  <div className="bg-cyan-900/30 rounded-lg p-2 border border-cyan-700/50">
+                    <Sparkles className="w-4 h-4 text-cyan-400 mb-1" />
+                    <p className="text-cyan-100 font-bold text-lg">{stats.mana}</p>
+                    <p className="text-cyan-300 text-xs">Mana</p>
+                  </div>
+                  <div className="bg-orange-900/30 rounded-lg p-2 border border-orange-700/50">
+                    <Sword className="w-4 h-4 text-orange-400 mb-1" />
+                    <p className="text-orange-100 font-bold text-lg">{stats.attack}</p>
+                    <p className="text-orange-300 text-xs">Ataque</p>
+                  </div>
+                  <div className="bg-blue-900/30 rounded-lg p-2 border border-blue-700/50">
+                    <Shield className="w-4 h-4 text-blue-400 mb-1" />
+                    <p className="text-blue-100 font-bold text-lg">{stats.defense}</p>
+                    <p className="text-blue-300 text-xs">Defesa</p>
+                  </div>
+                </div>
+
+                <div className="bg-stone-950/50 rounded-lg p-2 border border-stone-700 space-y-1 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-amber-400">Crítico:</span>
+                    <span className="text-amber-200">{stats.critChance}%</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-amber-400">Dano Crítico:</span>
+                    <span className="text-amber-200">{stats.critDamage}%</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-amber-400">Esquiva:</span>
+                    <span className="text-amber-200">{stats.dodgeChance}%</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-amber-400">Resiliência:</span>
+                    <span className="text-amber-200">{stats.resilience}%</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-amber-400">Bônus Recompensas:</span>
+                    <span className="text-amber-200">{stats.rewardBonus}%</span>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <p className="text-amber-400 font-bold text-sm">Experiência</p>
+                    <p className="text-amber-300 text-xs">{selectedChar.experience}/{expRequired}</p>
+                  </div>
+                  <div className="w-full bg-stone-900 rounded-full h-2.5 overflow-hidden border border-stone-700 mb-2">
+                    <div 
+                      className="h-full bg-gradient-to-r from-amber-500 to-yellow-500 transition-all duration-300"
+                      style={{ width: `${expProgress}%` }}
+                    />
+                  </div>
+                  <Button
+                    onClick={handleLevelUp}
+                    disabled={!canLevelUp}
+                    size="sm"
+                    className="w-full bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-500 hover:to-yellow-500 disabled:opacity-40"
+                  >
+                    <TrendingUp className="w-3 h-3 mr-2" />
+                    {canLevelUp ? 'Subir de Nível' : 'EXP Insuficiente'}
+                  </Button>
+                </div>
+
+                {selectedChar.ability && abilityDescriptions[selectedChar.ability] && (
+                  <div className="bg-purple-900/30 rounded-lg p-2 border border-purple-700/50">
+                    <p className="text-purple-300 font-bold text-xs mb-1">
+                      {abilityDescriptions[selectedChar.ability].name}
+                    </p>
+                    <p className="text-purple-200 text-xs leading-tight">
+                      {getAbilityDescriptionWithValues(selectedChar)}
+                    </p>
+                  </div>
+                )}
+
+                <AptitudeDisplay 
+                  weaponGroup={selectedChar.allowed_weapon_group} 
+                  armorGroup={selectedChar.allowed_armor_group}
+                />
+
+{selectedChar.trait ? (
+  selectedChar.level >= 30 ? (
+    selectedChar.trait_unlocked ? (
+      <div className="bg-purple-900/30 rounded-lg p-2 border border-purple-700/50">
+        <div className="flex items-center gap-2 mb-1">
+          {React.createElement(traitConfig[selectedChar.trait]?.icon || Sparkles, { 
+            className: `w-4 h-4 ${traitConfig[selectedChar.trait]?.color || 'text-purple-400'}` 
+          })}
+          <p className="text-purple-300 font-bold text-xs">Traço: {traitConfig[selectedChar.trait]?.name}</p>
+        </div>
+        <p className="text-purple-200 text-xs">
+          {traitConfig[selectedChar.trait]?.stat ? 
+            `+${Math.floor(selectedChar.trait_value * 100)}% ${statInfo[traitConfig[selectedChar.trait]?.stat]?.name}` :
+            traitConfig[selectedChar.trait]?.desc
+          }
+        </p>
+      </div>
+    ) : (
+      <div className="bg-amber-900/30 rounded-lg p-2 border border-amber-700/50">
+        <p className="text-amber-300 font-bold text-xs mb-2">🔒 Traço Bloqueado</p>
+        <Button
+          onClick={() => {
+            updateCharacterMutation.mutate({
+              id: selectedChar.id,
+              data: { trait_unlocked: true }
+            });
+          }}
+          size="sm"
+          className="w-full bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-500 hover:to-purple-600"
+        >
+          Desbloquear Traço
+        </Button>
+      </div>
+    )
+  ) : (
+    <div className="bg-stone-900/50 rounded-lg p-2 border border-stone-700">
+      <p className="text-stone-400 font-bold text-xs mb-1">🔒 Traço Oculto</p>
+      <p className="text-stone-500 text-xs">Desbloqueado no Nível 30</p>
+    </div>
+  )
+) : null}
+
+                <div className="bg-stone-950/50 rounded-lg p-2 border border-stone-700">
+                  <p className="text-amber-400 text-xs font-bold mb-2">Substatus</p>
+                  <TooltipProvider>
+                    <div className="grid grid-cols-3 gap-1.5 text-xs">
+                      {Object.entries(statNames).map(([key, label]) => {
+                        const StatIcon = statInfo[key].icon;
+                        return (
+                          <Tooltip key={key}>
+                            <TooltipTrigger asChild>
+                              <div className="text-center cursor-help bg-stone-900/50 rounded p-1.5">
+                                <div className="flex items-center justify-center gap-0.5 mb-0.5">
+                                  <StatIcon className={`w-2.5 h-2.5 ${statInfo[key].color}`} />
+                                  <p className={`${statInfo[key].color} text-xs`}>{label}</p>
+                                </div>
+                                <p className="text-amber-100 font-bold text-sm">{stats.totalSubstats[key]}</p>
+                              </div>
+                            </TooltipTrigger>
+                            <TooltipContent className="bg-stone-900 border-amber-700/50 max-w-xs">
+                              <p className="text-amber-200 text-xs font-bold mb-0.5">{statInfo[key].name}</p>
+                              <p className="text-amber-300 text-xs">{statInfo[key].desc}</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        );
+                      })}
+                    </div>
+                  </TooltipProvider>
+                </div>
+                </CardContent>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="charts" className="mt-0">
+                <ProgressionCharts 
+                  character={selectedChar}
+                  currentStats={stats}
+                  nextLevelGains={true}
+                />
+              </TabsContent>
+            </Tabs>
+
+            {(selectedChar.level === 10 || selectedChar.level === 30) && (
+              <ClassEvolution
+                currentClass={selectedChar.class}
+                level={selectedChar.level}
+                onEvolve={(newClass, newAbility) => {
+                  updateCharacterMutation.mutate({
+                    id: selectedChar.id,
+                    data: selectedChar.level === 10 ? 
+                      { class2: newClass, ability: newAbility } :
+                      { class3: newClass, ability: newAbility }
+                  });
+                }}
+              />
+            )}
+          </div>
+
+          <div className="lg:col-span-2 space-y-4">
+            <Card className="bg-stone-900/60 backdrop-blur-sm border-amber-800/30">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-amber-100 text-lg">Equipamentos</CardTitle>
+              </CardHeader>
+              <CardContent>
+<div className="grid grid-cols-5 gap-3">
+                  {['weapon', 'armor', 'helmet', 'boots', 'amulet'].map(slotType => (
+                    <div key={slotType} className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <p className="text-amber-400 text-sm font-bold truncate">
+                          {slotType === 'weapon' ? 'Arma' : 
+                           slotType === 'armor' ? 'Armadura' :
+                           slotType === 'helmet' ? 'Capacete' :
+                           slotType === 'boots' ? 'Botas' : 'Amuleto'}
+                        </p>
+                        {equippedItems[slotType] && (
+                          <Button size="sm" variant="ghost" onClick={() => handleUnequip(`equipped_${slotType}`)} className="h-5 w-5 p-0">
+                            <X className="w-3.5 h-3.5 text-red-400" />
+                          </Button>
+                        )}
+                      </div>
+                      {equippedItems[slotType] ? (
+                        slotType === 'weapon' ? (
+                          <WeaponPatternTooltip weaponType={equippedItems[slotType].weapon_type}>
+                            <div className="scale-110 origin-top">
+                              <ItemCard item={equippedItems[slotType]} compact={true} />
+                            </div>
+                          </WeaponPatternTooltip>
+                        ) : (
+                          <div className="scale-110 origin-top">
+                            <ItemCard item={equippedItems[slotType]} compact={true} />
+                          </div>
+                        )
+                      ) : (
+                        <div className="bg-stone-950/50 rounded-lg p-3 border border-stone-700 h-40 flex items-center justify-center">
+                          <p className="text-stone-500 text-sm">Vazio</p>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-stone-900/60 backdrop-blur-sm border-amber-800/30">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-amber-100 text-lg">Inventário</CardTitle>
+              </CardHeader>
+              <CardContent className="max-h-96 overflow-y-auto">
+                <div className="space-y-3">
+                  {availableWeapons.length > 0 && (
+                    <div>
+                      <p className="text-amber-400 font-bold mb-2 text-sm">Armas:</p>
+                      <div className="grid grid-cols-4 gap-2">
+                        {availableWeapons.map(item => (
+                          <ItemCard
+                            key={item.id}
+                            item={item}
+                            action={() => handleEquip(item)}
+                            actionLabel="Equipar"
+                            actionDisabled={item.level_requirement > selectedChar.level}
+                            compact={true}
+                            showTooltip={true}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {availableOtherItems.length > 0 && (
+                    <div>
+                      <p className="text-amber-400 font-bold mb-2 text-sm">Outros:</p>
+                      <div className="grid grid-cols-4 gap-2">
+                        {availableOtherItems.map(item => (
+                          <ItemCard
+                            key={item.id}
+                            item={item}
+                            action={() => handleEquip(item)}
+                            actionLabel="Equipar"
+                            actionDisabled={item.level_requirement > selectedChar.level}
+                            compact={true}
+                            showTooltip={true}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {availableWeapons.length === 0 && availableOtherItems.length === 0 && (
+                    <p className="text-stone-400 text-center py-8 text-sm">Nenhum item disponível</p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      </div>
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent className="bg-stone-900 border-amber-800/30">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-amber-100">Deletar Personagem?</AlertDialogTitle>
+            <AlertDialogDescription className="text-amber-300">
+              Tem certeza que deseja deletar {charToDelete?.name}? Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="bg-stone-800 text-amber-100 border-amber-900/50">
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete} className="bg-red-600 hover:bg-red-700">
+              Deletar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
