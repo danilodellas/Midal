@@ -1,0 +1,1541 @@
+import React, { useState, useEffect } from "react";
+import { base44 } from "@/api/base44Client";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Swords, Crown, Shield, TrendingUp, Coins, Ghost, X, AlertTriangle, Loader2 } from "lucide-react";
+import { motion } from "framer-motion";
+import GameBoard from "../components/rpg/GameBoard";
+import NewBattleSetup from "../components/rpg/NewBattleSetup";
+import HPDisplay from "../components/rpg/HPDisplay";
+import BattleLog from "../components/rpg/BattleLog";
+import AbilityButton from "../components/rpg/AbilityButton";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { cn } from "@/lib/utils";
+import { weaponConfig, getDamageModifier, getWeaponAttackPattern } from "../components/rpg/WeaponConfig";
+import { generateItem } from "../components/rpg/ItemGenerator";
+import { calculateTotalStats } from "../components/rpg/StatsCalculator";
+
+const calculateDamage = (attackerStats, defenderStats, weaponModifier, critChance, critDamage, isAbility = false) => {
+  const attacker = attackerStats.attack;
+  const defender = defenderStats.defense;
+  const defenderDodgeChance = defenderStats.dodgeChance;
+  
+  const isDodged = Math.random() * 100 < defenderDodgeChance;
+  if (isDodged) return { damage: 0, critical: false, dodged: true };
+  
+  const modifier = weaponModifier.min + Math.random() * (weaponModifier.max - weaponModifier.min);
+  const attackWithModifier = attacker * (modifier / 100);
+  const baseDamage = attackWithModifier * (attackWithModifier / (attackWithModifier + defender));
+  
+  if (isAbility) {
+    return { damage: Math.floor(baseDamage), critical: false, dodged: false };
+  }
+  
+  const isCritical = Math.random() * 100 < critChance;
+  
+  if (isCritical) return { damage: Math.floor(baseDamage * (critDamage / 100)), critical: true, dodged: false };
+  return { damage: Math.floor(baseDamage), critical: false, dodged: false };
+};
+
+const applyEffects = (baseAttack, baseDefense, effects) => {
+  let attack = baseAttack;
+  let defense = baseDefense;
+  
+  effects.forEach(effect => {
+    if (effect.type === 'attack_down' && effect.value) {
+      attack = Math.floor(attack * (1 - effect.value / 100));
+    } else if (effect.type === 'defense_down' && effect.value) {
+      defense = Math.floor(defense * (1 - effect.value / 100));
+    } else if (effect.type === 'attack_up' && effect.value) {
+      attack = Math.floor(attack * (1 + effect.value / 100));
+    } else if (effect.type === 'defense_up' && effect.value) {
+      defense = Math.floor(defense * (1 + effect.value / 100));
+    }
+  });
+  
+  return { attack, defense };
+};
+
+const getRewardsByDifficulty = (difficulty, location) => {
+const rewardRanges = {
+  forest: {
+    easy: { expMin: 25, expMax: 45, goldMin: 4, goldMax: 6 },
+    medium: { expMin: 55, expMax: 65, goldMin: 8, goldMax: 12 },
+    hard: { expMin: 75, expMax: 95, goldMin: 15, goldMax: 25 },
+    boss: { expMin: 150, expMax: 200, goldMin: 40, goldMax: 60 }
+  },
+  cemetery: {
+    easy: { expMin: 78, expMax: 109, goldMin: 31, goldMax: 48 },
+    medium: { expMin: 109, expMax: 153, goldMin: 45, goldMax: 70 },
+    hard: { expMin: 154, expMax: 216, goldMin: 62, goldMax: 95 },
+    boss: { expMin: 238, expMax: 340, goldMin: 101, goldMax: 144 }
+  },
+  desert: {
+    easy: { expMin: 143, expMax: 196, goldMin: 56, goldMax: 81 },
+    medium: { expMin: 195, expMax: 280, goldMin: 80, goldMax: 119 },
+    hard: { expMin: 280, expMax: 408, goldMin: 110, goldMax: 159 },
+    boss: { expMin: 430, expMax: 619, goldMin: 178, goldMax: 252 }
+  }
+};
+
+  const range = rewardRanges[location][difficulty];
+  const expGain = range.expMin + Math.floor(Math.random() * (range.expMax - range.expMin + 1));
+  const goldGain = range.goldMin + Math.floor(Math.random() * (range.goldMax - range.goldMin + 1));
+  
+  return { expGain, goldGain };
+};
+
+const getAbilityManaCost = (ability) => {
+  const costs = {
+    double_strike: 6,
+    arrow_line: 6,
+    magic_column: 8,
+    just_strike: 6,
+    power_column: 8,
+    sharp_arrow_line: 6,
+    royal_strike: 6,
+    trap: 6,
+    heal: 8,
+    slash: 8,
+    lightning_bolt: 10
+  };
+  return costs[ability] || 6;
+};
+
+export default function BatalhaNaval() {
+  const [selectedGame, setSelectedGame] = useState(null);
+  const [user, setUser] = useState(null);
+  const [showRewards, setShowRewards] = useState(false);
+  const [selectedAttacks, setSelectedAttacks] = useState([]);
+  const [quitDialogOpen, setQuitDialogOpen] = useState(false);
+  const [hitAnimation, setHitAnimation] = useState(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [preparingBattle, setPreparingBattle] = useState(false);
+  const [precalculatedRewards, setPrecalculatedRewards] = useState(null);
+  const [manaUsed, setManaUsed] = useState(false);
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    base44.auth.me().then(setUser).catch(() => {});
+  }, []);
+
+  const { data: games, isLoading } = useQuery({
+    queryKey: ['games'],
+    queryFn: () => base44.entities.Game.list('-created_date'),
+    initialData: [],
+  });
+
+  const { data: characters } = useQuery({
+    queryKey: ['characters'],
+    queryFn: () => base44.entities.Character.list(),
+    initialData: [],
+  });
+
+  const { data: bestiary } = useQuery({
+    queryKey: ['bestiary'],
+    queryFn: () => base44.entities.Bestiary.list(),
+    initialData: [],
+  });
+
+  const { data: inventory } = useQuery({
+    queryKey: ['inventory'],
+    queryFn: () => base44.entities.Inventory.list(),
+    initialData: [],
+  });
+
+  const createGameMutation = useMutation({
+    mutationFn: (gameData) => base44.entities.Game.create(gameData),
+    onSuccess: async (newGame) => {
+      queryClient.invalidateQueries({ queryKey: ['games'] });
+      
+      const battleLog = ["A batalha está prestes a começar!"];
+      
+      await base44.entities.Game.update(newGame.id, {
+        turn_number: 1,
+        battle_log: battleLog
+      });
+      
+      const updatedGame = await base44.entities.Game.filter({ id: newGame.id });
+      setSelectedGame(updatedGame[0]);
+      setShowRewards(false);
+      setSelectedAttacks([]);
+      setIsProcessing(false);
+    },
+  });
+
+  const updateGameMutation = useMutation({
+    mutationFn: ({ id, data }) => base44.entities.Game.update(id, data),
+    onSuccess: (updatedGame) => {
+      queryClient.invalidateQueries({ queryKey: ['games'] });
+      setSelectedGame(updatedGame);
+      setIsProcessing(false);
+    },
+  });
+
+  const createInventoryMutation = useMutation({
+    mutationFn: (data) => base44.entities.Inventory.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+    },
+  });
+
+  const updateCharacterMutation = useMutation({
+    mutationFn: ({ id, data }) => base44.entities.Character.update(id, data),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['characters'] }),
+  });
+
+  const precalculateRewards = (difficulty, location, character) => {
+    const { expGain: baseExp, goldGain: baseGold } = getRewardsByDifficulty(difficulty, location);
+    
+    const userInventory = inventory.filter(i => i.created_by === user?.email);
+    const stats = calculateTotalStats(character, userInventory);
+    const rewardBonus = parseFloat(stats.rewardBonus);
+    
+    let expGain = baseExp;
+    
+    let goldGain = Math.floor(baseGold * (1 + (rewardBonus / 100)));
+
+    const soulsGain = difficulty === 'boss' ? 2 : 1;
+
+    let dropChances, itemLevelRange;
+    
+    if (location === 'forest') {
+      dropChances = {
+        easy: { common: 0.35, uncommon: 0, rare: 0, epic: 0 },
+        medium: { common: 0.20, uncommon: 0.15, rare: 0, epic: 0 },
+        hard: { common: 0.20, uncommon: 0.20, rare: 0, epic: 0 },
+        boss: { common: 0.15, uncommon: 0.20, rare: 0.05, epic: 0 }
+      };
+      
+      itemLevelRange = {
+        easy: [1, 5],
+        medium: [3, 7],
+        hard: [5, 10],
+        boss: [7, 10]
+      };
+    } else if (location === 'cemetery') {
+      dropChances = {
+        easy: { common: 0.35, uncommon: 0, rare: 0, epic: 0 },
+        medium: { common: 0.20, uncommon: 0.15, rare: 0, epic: 0 },
+        hard: { common: 0.20, uncommon: 0.20, rare: 0, epic: 0 },
+        boss: { common: 0.15, uncommon: 0.20, rare: 0.05, epic: 0 }
+      };
+      
+      itemLevelRange = {
+        easy: [11, 15],
+        medium: [13, 17],
+        hard: [15, 20],
+        boss: [17, 20]
+      };
+    } else {
+      dropChances = {
+        easy: { common: 0.35, uncommon: 0, rare: 0, epic: 0 },
+        medium: { common: 0.20, uncommon: 0.15, rare: 0, epic: 0 },
+        hard: { common: 0.20, uncommon: 0.20, rare: 0, epic: 0 },
+        boss: { common: 0.15, uncommon: 0.20, rare: 0.05, epic: 0 }
+      };
+      
+      itemLevelRange = {
+        easy: [21, 25],
+        medium: [23, 27],
+        hard: [25, 30],
+        boss: [27, 30]
+      };
+    }
+
+    const equippedIds = new Set();
+    characters.filter(c => c.created_by === user?.email).forEach(c => {
+      [c.equipped_weapon, c.equipped_armor, c.equipped_helmet, c.equipped_boots, c.equipped_amulet].forEach(id => {
+        if (id) equippedIds.add(id);
+      });
+    });
+    const unequippedCount = userInventory.filter(i => !equippedIds.has(i.id)).length;
+
+    let droppedItem = null;
+    if (unequippedCount < 10) {
+      const chances = dropChances[difficulty];
+      
+      if (chances.epic > 0 && Math.random() < chances.epic) {
+        droppedItem = generateItem('epic', character.level, itemLevelRange[difficulty]);
+      } else if (chances.rare > 0 && Math.random() < chances.rare) {
+        droppedItem = generateItem('rare', character.level, itemLevelRange[difficulty]);
+      } else if (chances.uncommon > 0 && Math.random() < chances.uncommon) {
+        droppedItem = generateItem('uncommon', character.level, itemLevelRange[difficulty]);
+      } else if (chances.common > 0 && Math.random() < chances.common) {
+        droppedItem = generateItem('common', character.level, itemLevelRange[difficulty]);
+      }
+    }
+
+    return {
+      experience: expGain,
+      gold: goldGain,
+      souls: soulsGain,
+      item: droppedItem
+    };
+  };
+
+  const handleCreateGame = async (player1Name, player2Name, difficulty, characterId, location) => {
+    setPreparingBattle(true);
+    
+    const character = characters.find(c => c.id === characterId);
+    const userInventory = inventory.filter(i => i.created_by === user?.email);
+    
+    const monstersInDiff = bestiary.filter(m => m.difficulty === difficulty && m.location === location);
+    if (monstersInDiff.length === 0) {
+      setPreparingBattle(false);
+      return;
+    }
+    
+    const selectedMonster = monstersInDiff[Math.floor(Math.random() * monstersInDiff.length)];
+    const playerStats = calculateTotalStats(character, userInventory);
+    
+    const precalcRewards = precalculateRewards(difficulty, location, character);
+    setPrecalculatedRewards({
+      ...precalcRewards,
+      characterId,
+      monsterType: selectedMonster.type,
+      difficulty,
+      location
+    });
+    
+    const equippedWeapon = userInventory.find(i => i.id === character.equipped_weapon);
+    const weaponModifier = getDamageModifier(equippedWeapon?.weapon_type);
+    
+    createGameMutation.mutate({
+      player1_name: player1Name,
+      player2_name: selectedMonster.name,
+      difficulty: difficulty,
+      location: location,
+      monster_type: selectedMonster.type,
+      player1_character_id: characterId,
+      turn_number: 0,
+      player1_position: { row: 0, col: 0 },
+      player2_position: { row: 2, col: 2 },
+      player1_hp: playerStats.hp,
+      player2_hp: selectedMonster.hp,
+      player1_max_hp: playerStats.hp,
+      player2_max_hp: selectedMonster.hp,
+      player1_mana: playerStats.mana, // Changed from character.current_mana || 10
+      player1_max_mana: playerStats.mana,
+      player1_attack: playerStats.attack,
+      player2_attack: selectedMonster.attack,
+      player1_defense: playerStats.defense,
+      player2_defense: selectedMonster.defense,
+      player1_crit_chance: parseFloat(playerStats.critChance),
+      player1_crit_damage: parseFloat(playerStats.critDamage),
+      player1_dodge_chance: parseFloat(playerStats.dodgeChance),
+      player1_resilience: parseFloat(playerStats.resilience),
+      player2_dodge_chance: 5,
+      player2_resilience: 0,
+      player1_effects: [],
+      player2_effects: [],
+      burning_tiles: [],
+      traps: [], // Initialize traps array
+      player1_moved: false,
+      player2_moved: false,
+      player1_attacked: false,
+      player2_attacked: false,
+      player1_ability_cooldown: 0,
+      player1_ability_active: false,
+      battle_log: [],
+      rewards: precalcRewards,
+      status: "active"
+    });
+    
+    setPreparingBattle(false);
+  };
+
+  const handleQuit = () => {
+    setQuitDialogOpen(true);
+  };
+
+  const confirmQuit = () => {
+    setSelectedGame(null);
+    setQuitDialogOpen(false);
+    setShowRewards(false);
+    setSelectedAttacks([]);
+    setIsProcessing(false);
+    setPrecalculatedRewards(null);
+  };
+
+  const handleProceed = () => {
+    setSelectedGame(null);
+    setShowRewards(false);
+    setSelectedAttacks([]);
+    setIsProcessing(false);
+    setPrecalculatedRewards(null);
+  };
+
+  const handleMoveClick = (row, col) => {
+    if (!selectedGame || selectedGame.status === "finished" || isProcessing || selectedGame.player1_moved) return;
+
+    const currentPos = selectedGame.player1_position;
+    const rowDiff = Math.abs(row - currentPos.row);
+    const colDiff = Math.abs(col - currentPos.col);
+    
+    if (rowDiff > 1 || colDiff > 1) return;
+    if (rowDiff === 1 && colDiff === 1) return;
+
+    updateGameMutation.mutate({
+      id: selectedGame.id,
+      data: {
+        player1_pending_move: { row, col },
+        player1_moved: true
+      }
+    });
+  };
+
+  const handleSkipImmobilized = () => {
+    if (!selectedGame || isProcessing) return;
+    
+    updateGameMutation.mutate({
+      id: selectedGame.id,
+      data: {
+        player1_pending_move: selectedGame.player1_position,
+        player1_moved: true
+      }
+    });
+  };
+
+  const handleActivateAbility = () => {
+    if (!selectedGame || selectedGame.player1_ability_cooldown > 0 || isProcessing) return;
+    
+    const character = characters.find(c => c.id === selectedGame.player1_character_id);
+    const ability = character?.ability;
+    if (!ability) {
+      alert("Habilidade não definida!");
+      return;
+    }
+    const manaCost = getAbilityManaCost(ability);
+    
+    if (selectedGame.player1_mana < manaCost) {
+      alert("Mana insuficiente!");
+      return;
+    }
+    
+    updateGameMutation.mutate({
+      id: selectedGame.id,
+      data: {
+        player1_ability_active: true
+      }
+    });
+    setSelectedAttacks([]);
+  };
+
+  const handleSkipStunned = () => {
+    if (!selectedGame || isProcessing) return;
+    
+    setIsProcessing(true);
+    const botMove = generateBotMove(selectedGame);
+    const botAttack = generateBotAttack(selectedGame);
+    
+    const updateData = {
+      player1_attack_target: null,
+      player1_attacked: true,
+      player2_pending_move: botMove,
+      player2_attack_target: botAttack,
+      player2_moved: true,
+      player2_attacked: true
+    };
+
+    const character = characters.find(c => c.id === selectedGame.player1_character_id);
+    const userInventory = inventory.filter(i => i.created_by === user?.email);
+    const equippedWeaponId = character?.equipped_weapon;
+    const equippedWeapon = userInventory.find(item => item.id === equippedWeaponId);
+    const weaponType = equippedWeapon?.weapon_type;
+    const weaponModifier = getDamageModifier(weaponType);
+
+    resolveTurn({ ...selectedGame, ...updateData }, 'stunned_skip', weaponModifier);
+  };
+
+  const handleAttackClick = (row, col) => {
+    if (!selectedGame || !selectedGame.player1_moved || selectedGame.status === "finished" || isProcessing) return;
+
+    const character = characters.find(c => c.id === selectedGame.player1_character_id);
+    const userInventory = inventory.filter(i => i.created_by === user?.email);
+    const equippedWeaponId = character?.equipped_weapon;
+    const equippedWeapon = userInventory.find(item => item.id === equippedWeaponId);
+    const weaponType = equippedWeapon?.weapon_type;
+    
+    const ability = character?.ability;
+
+    if (selectedGame.player1_ability_active && ability) {
+      if (ability === 'double_strike' || ability === 'just_strike' || ability === 'royal_strike' || ability === 'slash') {
+        const alreadySelected = selectedAttacks.some(s => s.row === row && s.col === col);
+        if (alreadySelected) return;
+        
+        const newAttacks = [...selectedAttacks, { row, col }];
+        setSelectedAttacks(newAttacks);
+        if (newAttacks.length === 2) {
+          setIsProcessing(true);
+          executeAttack(newAttacks, ability);
+        }
+      } else if (ability === 'arrow_line' || ability === 'sharp_arrow_line') {
+        setIsProcessing(true);
+        const targets = [0, 1, 2].map(c => ({ row, col: c }));
+        setSelectedAttacks(targets);
+        setTimeout(() => executeAttack(targets, ability), 300);
+      } else if (ability === 'magic_column' || ability === 'power_column' || ability === 'lightning_bolt') {
+        setIsProcessing(true);
+        const columnAttacks = [0, 1, 2].map(r => ({ row: r, col }));
+        setSelectedAttacks(columnAttacks);
+        setTimeout(() => executeAttack(columnAttacks, ability), 300);
+      } else if (ability === 'trap' || ability === 'heal') {
+        setIsProcessing(true);
+        executeAttack([{ row, col }], ability);
+      } else {
+        setIsProcessing(true);
+        executeAttack([{ row, col }], ability);
+      }
+    } else {
+      const weaponTargets = getWeaponAttackPattern(weaponType, { row, col });
+      setSelectedAttacks(weaponTargets);
+      setIsProcessing(true);
+      setTimeout(() => executeAttack(weaponTargets, null), 200);
+    }
+  };
+
+  const executeAttack = (targets, ability) => {
+    const character = characters.find(c => c.id === selectedGame.player1_character_id);
+    const manaCost = ability ? getAbilityManaCost(ability) : 0;
+    
+    if (manaCost > 0) {
+      setManaUsed(true);
+      setTimeout(() => setManaUsed(false), 800);
+    }
+    
+    const updateData = {
+      player1_attack_target: targets[0],
+      player1_attack_target_2: targets[1] || null,
+      player1_attacked: true,
+      player1_ability_active: false,
+      player1_mana: selectedGame.player1_mana - manaCost
+    };
+
+    if (targets.length > 2) {
+      updateData.player1_multi_targets = targets;
+    }
+
+    const botMove = generateBotMove(selectedGame);
+    const botAttack = generateBotAttack(selectedGame);
+    
+    updateData.player2_pending_move = botMove;
+    updateData.player2_attack_target = botAttack;
+    updateData.player2_moved = true;
+    updateData.player2_attacked = true;
+
+    const userInventory = inventory.filter(i => i.created_by === user?.email);
+    const equippedWeaponId = character?.equipped_weapon;
+    const equippedWeapon = userInventory.find(item => item.id === equippedWeaponId);
+    const weaponType = equippedWeapon?.weapon_type;
+    const weaponModifier = getDamageModifier(weaponType);
+
+    setSelectedAttacks([]);
+    setIsProcessing(true);
+    resolveTurn({ ...selectedGame, ...updateData }, ability, weaponModifier);
+  };
+
+  const generateBotMove = (game) => {
+    const currentPos = game.player2_position;
+    
+    const isImmobilized = game.player2_effects?.some(e => e.type === 'immobilized');
+    if (isImmobilized) return currentPos;
+    
+    if (Math.random() < 0.2) return currentPos;
+    
+    const directions = [
+      { row: -1, col: 0 }, 
+      { row: 1, col: 0 }, 
+      { row: 0, col: -1 }, 
+      { row: 0, col: 1 }
+    ];
+    
+    const validMoves = directions
+      .map(d => ({ row: currentPos.row + d.row, col: currentPos.col + d.col }))
+      .filter(pos => pos.row >= 0 && pos.row <= 2 && pos.col >= 0 && pos.col <= 2);
+    
+    return validMoves[Math.floor(Math.random() * validMoves.length)] || currentPos;
+  };
+
+  const generateBotAttack = (game) => {
+    const isStunned = game.player2_effects?.some(e => e.type === 'stunned');
+    if (isStunned) return null;
+    
+    const p1Moved = game.player1_pending_move && 
+      (game.player1_pending_move.row !== game.player1_position.row || 
+       game.player1_pending_move.col !== game.player1_position.col);
+    
+    const baseHitChance = p1Moved ? 0.5 : 0.6;
+    const willHit = Math.random() < baseHitChance;
+    
+    if (willHit && game.player1_pending_move) {
+      return game.player1_pending_move;
+    } else {
+      return {
+        row: Math.floor(Math.random() * 3),
+        col: Math.floor(Math.random() * 3)
+      };
+    }
+  };
+
+  const resolveTurn = async (gameState, usedAbility = null, playerWeaponModifier = null) => {
+    const p1NewPos = gameState.player1_pending_move || gameState.player1_position;
+    const p2NewPos = gameState.player2_pending_move || gameState.player2_position;
+    const p2Attack = gameState.player2_attack_target;
+
+    const battleLog = [...(gameState.battle_log || [])];
+    let p1HP = gameState.player1_hp;
+    let p2HP = gameState.player2_hp;
+    const p1Mana = gameState.player1_mana;
+    let p1Effects = [...(gameState.player1_effects || [])];
+    let p2Effects = [...(gameState.player2_effects || [])];
+    let burningTiles = [...(gameState.burning_tiles || [])];
+    let traps = [...(gameState.traps || [])];
+
+    const currentTurn = (gameState.turn_number || 0);
+    if (currentTurn > 0) {
+      battleLog.push(`--- Turno ${currentTurn} ---`);
+    }
+
+    // Apply effects to get current stats for this turn
+    const p1Stats = applyEffects(gameState.player1_attack, gameState.player1_defense, p1Effects);
+    const p2Stats = applyEffects(gameState.player2_attack, gameState.player2_defense, p2Effects);
+
+    // Combat stats for calculations
+    const p1CombatStats = {
+      attack: p1Stats.attack,
+      defense: p1Stats.defense,
+      dodgeChance: gameState.player1_dodge_chance || 5,
+      critChance: gameState.player1_crit_chance || 5,
+      critDamage: gameState.player1_crit_damage || 200,
+      resilience: gameState.player1_resilience || 0
+    };
+
+    const p2CombatStats = {
+      attack: p2Stats.attack,
+      defense: p2Stats.defense,
+      dodgeChance: gameState.player2_dodge_chance || 5,
+      critChance: 5,
+      critDamage: 200,
+      resilience: gameState.player2_resilience || 0
+    };
+
+    // Check for traps *before* burning tiles and regeneration/poison, as movement happens first.
+    const steppedTrap = traps.find(t => t.row === p2NewPos.row && t.col === p2NewPos.col);
+    if (steppedTrap) {
+      const character = characters.find(c => c.id === gameState.player1_character_id);
+      const userInventory = inventory.filter(i => i.created_by === user?.email);
+      const charStats = calculateTotalStats(character, userInventory);
+      
+      const trapDmgCalc = calculateDamage(
+        { attack: p1Stats.attack, defense: 0, dodgeChance: 0, critChance: 0, critDamage: 100 },
+        { attack: 0, defense: p2Stats.defense, dodgeChance: 0 },
+        { min: 100, max: 100 },
+        0,
+        100,
+        true
+      );
+      
+      const trapMultiplier = steppedTrap.multiplier || 0;
+      const trapSubstatValue = charStats.totalSubstats[steppedTrap.substat] || 0;
+      const trapBonusDamage = (trapMultiplier / 100) * trapSubstatValue;
+      const finalTrapDamage = Math.floor(trapDmgCalc.damage + trapBonusDamage);
+      
+      p2HP -= finalTrapDamage;
+      battleLog.push(`💢 ${gameState.player2_name} pisou na armadilha! -${finalTrapDamage} de dano`);
+      traps = traps.filter(t => !(t.row === p2NewPos.row && t.col === p2NewPos.col)); // Remove the trap
+    }
+
+    burningTiles.forEach(tile => {
+      if (p1NewPos.row === tile.row && p1NewPos.col === tile.col) {
+        p1HP -= tile.damage;
+        battleLog.push(`🔥 ${gameState.player1_name} sofreu ${tile.damage} de dano por queimadura`);
+      }
+      if (p2NewPos.row === tile.row && p2NewPos.col === tile.col) {
+        p2HP -= tile.damage;
+        battleLog.push(`🔥 ${gameState.player2_name} sofreu ${tile.damage} de dano por queimadura`);
+      }
+    });
+
+    p1Effects.forEach(effect => {
+      if (effect.type === 'regeneration' && effect.value) {
+        const healAmount = effect.value;
+        p1HP = Math.min(gameState.player1_max_hp, p1HP + healAmount);
+        battleLog.push(`💚 ${gameState.player1_name} regenerou ${healAmount} HP`);
+      } else if (effect.type === 'poisoned' && effect.value) {
+        const damageAmount = effect.value;
+        p1HP -= damageAmount;
+        battleLog.push(`☠️ ${gameState.player1_name} sofreu ${damageAmount} de dano por veneno`);
+      }
+    });
+
+    p2Effects.forEach(effect => {
+      if (effect.type === 'regeneration' && effect.value) {
+        const healAmount = effect.value;
+        p2HP = Math.min(gameState.player2_max_hp, p2HP + healAmount);
+        battleLog.push(`💚 ${gameState.player2_name} regenerou ${healAmount} HP`);
+      } else if (effect.type === 'poisoned' && effect.value) {
+        const damageAmount = effect.value;
+        p2HP -= damageAmount;
+        battleLog.push(`☠️ ${gameState.player2_name} sofreu ${damageAmount} de dano por veneno`);
+      }
+    });
+    
+    const actualPlayerWeaponModifier = playerWeaponModifier || getDamageModifier(null);
+    const monsterWeaponModifier = getDamageModifier(null);
+    
+    const character = characters.find(c => c.id === gameState.player1_character_id);
+    const userInventory = inventory.filter(i => i.created_by === user?.email);
+    const charStats = calculateTotalStats(character, userInventory);
+    const abilityMultiplier = character?.ability_multiplier || 0;
+    const abilitySubstat = character?.ability_substat;
+    const abilitySubstatValue = charStats.totalSubstats[abilitySubstat] || 0;
+    const abilityBonusDamage = (abilityMultiplier / 100) * abilitySubstatValue;
+
+    if (usedAbility === 'trap') {
+      const trapTarget = gameState.player1_attack_target;
+      if (trapTarget) {
+        const existingTrap = traps.find(t => t.row === trapTarget.row && t.col === trapTarget.col);
+        if (!existingTrap) {
+          traps.push({
+            row: trapTarget.row,
+            col: trapTarget.col,
+            multiplier: abilityMultiplier,
+            substat: abilitySubstat
+          });
+          battleLog.push(`💢 ${gameState.player1_name} colocou uma armadilha em (${trapTarget.row}, ${trapTarget.col})!`);
+        } else {
+          battleLog.push(`❌ Já existe uma armadilha em (${trapTarget.row}, ${trapTarget.col}).`);
+        }
+      }
+    } else if (usedAbility === 'heal') {
+      const baseHeal = Math.floor(gameState.player1_max_hp * 0.10);
+      const bonusHeal = Math.floor(baseHeal * (abilityMultiplier / 100) * (abilitySubstatValue / 100));
+      const totalHeal = baseHeal + bonusHeal;
+      p1HP = Math.min(gameState.player1_max_hp, p1HP + totalHeal);
+      battleLog.push(`💚 ${gameState.player1_name} curou ${totalHeal} HP`);
+      
+      const attackDebuff = character?.ability_attack_debuff || 30;
+      const hasAttackDown = p2Effects.some(e => e.type === 'attack_down');
+      if (!hasAttackDown) {
+        p2Effects.push({ type: 'attack_down', duration: 2, value: attackDebuff });
+        battleLog.push(`⚔️ Ataque de ${gameState.player2_name} reduzido (-${attackDebuff}%)!`);
+      }
+    } else if (usedAbility !== 'stunned_skip') {
+      const playerTargets = gameState.player1_multi_targets || 
+        [gameState.player1_attack_target, gameState.player1_attack_target_2].filter(Boolean);
+
+      let hitCount = 0;
+      const isAbilityAttack = usedAbility;
+      
+      playerTargets.forEach((target) => {
+        if (target && target.row === p2NewPos.row && target.col === p2NewPos.col) {
+          const dmgCalc = calculateDamage(p1CombatStats, p2CombatStats, actualPlayerWeaponModifier, p1CombatStats.critChance, p1CombatStats.critDamage, isAbilityAttack);
+          
+          if (dmgCalc.dodged) {
+            battleLog.push(`✨ ${gameState.player2_name} esquivou!`);
+          } else {
+            let finalDamage = dmgCalc.damage;
+            
+            if (isAbilityAttack) {
+              finalDamage = Math.floor(finalDamage + abilityBonusDamage);
+            }
+            
+            p2HP -= finalDamage;
+            hitCount++;
+            setHitAnimation(p2NewPos);
+            setTimeout(() => setHitAnimation(null), 500);
+            
+            if (dmgCalc.critical) {
+              battleLog.push(`⚡ CRÍTICO! -${finalDamage} HP em ${gameState.player2_name}`);
+            } else {
+              battleLog.push(`💥 ${gameState.player1_name} causou ${finalDamage} de dano`);
+            }
+          }
+        }
+      });
+
+      if (usedAbility === 'just_strike' && hitCount > 0) {
+        const defenseBuff = character?.ability_defense_buff || 30;
+        const hasDefenseUp = p1Effects.some(e => e.type === 'defense_up');
+        if (!hasDefenseUp) {
+          p1Effects.push({ type: 'defense_up', duration: 3, value: defenseBuff });
+          battleLog.push(`🛡️ ${gameState.player1_name} ganhou Aumento de Defesa (+${defenseBuff}%)!`);
+        }
+      } else if (usedAbility === 'power_column' && hitCount > 0) {
+        const attackBuff = character?.ability_attack_buff || 30;
+        const hasAttackUp = p1Effects.some(e => e.type === 'attack_up');
+        if (!hasAttackUp) {
+          p1Effects.push({ type: 'attack_up', duration: 3, value: attackBuff });
+          battleLog.push(`⚔️ ${gameState.player1_name} ganhou Aumento de Ataque (+${attackBuff}%)!`);
+        }
+      } else if (usedAbility === 'sharp_arrow_line' && hitCount > 0) {
+        const defenseDebuff = character?.ability_defense_debuff || 30;
+        const hasDefenseDown = p2Effects.some(e => e.type === 'defense_down');
+        if (!hasDefenseDown) {
+          p2Effects.push({ type: 'defense_down', duration: 4, value: defenseDebuff });
+          battleLog.push(`🎯 Defesa de ${gameState.player2_name} reduzida (-${defenseDebuff}%)!`);
+        }
+      } else if (usedAbility === 'royal_strike' && hitCount > 0) {
+        const attackBuff = character?.ability_attack_buff || 30;
+        const defenseBuff = character?.ability_defense_buff || 30;
+        const hasAttackUp = p1Effects.some(e => e.type === 'attack_up');
+        const hasDefenseUp = p1Effects.some(e => e.type === 'defense_up');
+        if (!hasAttackUp) {
+          p1Effects.push({ type: 'attack_up', duration: 3, value: attackBuff });
+        }
+        if (!hasDefenseUp) {
+          p1Effects.push({ type: 'defense_up', duration: 3, value: defenseBuff });
+        }
+        if (!hasAttackUp || !hasDefenseUp) {
+          battleLog.push(`👑 ${gameState.player1_name} ganhou Aumento de Ataque (+${attackBuff}%) e Defesa (+${defenseBuff}%)!`);
+        }
+      } else if (usedAbility === 'slash' && hitCount > 0) {
+        const isResisted = Math.random() * 100 < p2CombatStats.resilience;
+        const hasImmobilized = p2Effects.some(e => e.type === 'immobilized');
+        if (!isResisted && !hasImmobilized) {
+          p2Effects.push({ type: 'immobilized', duration: 2 });
+          battleLog.push(`⚔️ ${gameState.player2_name} foi imobilizado!`);
+        } else if (hasImmobilized) {
+          battleLog.push(`⚔️ ${gameState.player2_name} já está imobilizado!`);
+        } else {
+          battleLog.push(`🛡️ ${gameState.player2_name} resistiu à imobilização!`);
+        }
+      } else if (usedAbility === 'lightning_bolt' && hitCount > 0) {
+        const isResisted = Math.random() * 100 < p2CombatStats.resilience;
+        const hasStunned = p2Effects.some(e => e.type === 'stunned');
+        if (!isResisted && !hasStunned) {
+          p2Effects.push({ type: 'stunned', duration: 2 });
+          battleLog.push(`⚡ ${gameState.player2_name} foi atordoado!`);
+        } else if (hasStunned) {
+          battleLog.push(`⚡ ${gameState.player2_name} já está atordoado!`);
+        } else {
+          battleLog.push(`🛡️ ${gameState.player2_name} resistiu ao atordoamento!`);
+        }
+      }
+
+      if (playerTargets.length > 0 && hitCount === 0) {
+        battleLog.push(`❌ ${gameState.player1_name} errou!`);
+      }
+    }
+
+    if (p2Attack && p2Attack.row === p1NewPos.row && p2Attack.col === p1NewPos.col) {
+      const dmgCalc = calculateDamage(p2CombatStats, p1CombatStats, monsterWeaponModifier, p2CombatStats.critChance, p2CombatStats.critDamage);
+      
+      if (dmgCalc.dodged) {
+        battleLog.push(`✨ ${gameState.player1_name} esquivou!`);
+      } else {
+        p1HP -= dmgCalc.damage;
+        setHitAnimation(p1NewPos);
+        setTimeout(() => setHitAnimation(null), 500);
+        
+        if (dmgCalc.critical) {
+          battleLog.push(`⚡ CRÍTICO! -${dmgCalc.damage} HP em ${gameState.player1_name}`);
+        } else {
+          battleLog.push(`💥 ${gameState.player2_name} causou ${dmgCalc.damage} de dano`);
+        }
+        
+        if (!dmgCalc.critical) {
+          if (gameState.monster_type === 'crow' && Math.random() < 0.20) {
+            const hasAttackUp = p2Effects.some(e => e.type === 'attack_up');
+            if (!hasAttackUp) {
+              p2Effects.push({ type: 'attack_up', duration: 3, value: 30 });
+              battleLog.push(`🦅 ${gameState.player2_name} ganhou Aumento de Ataque (+30%)!`);
+            }
+          }
+          if (gameState.monster_type === 'wolf' && Math.random() < 0.3) {
+            const isResisted = Math.random() * 100 < p1CombatStats.resilience;
+            const hasDefenseDown = p1Effects.some(e => e.type === 'defense_down');
+            if (!isResisted && !hasDefenseDown) {
+              p1Effects.push({ type: 'defense_down', duration: 3, value: 30 });
+              battleLog.push(`🐺 Defesa de ${gameState.player1_name} reduzida (-30%)!`);
+            } else if (hasDefenseDown) {
+              battleLog.push(`🐺 Defesa de ${gameState.player1_name} já está reduzida!`);
+            } else {
+              battleLog.push(`🛡️ ${gameState.player1_name} resistiu à redução de defesa!`);
+            }
+          }
+          if (gameState.monster_type === 'frog' && Math.random() < 0.3) {
+            const isResisted = Math.random() * 100 < p1CombatStats.resilience;
+            const hasAttackDown = p1Effects.some(e => e.type === 'attack_down');
+            if (!isResisted && !hasAttackDown) {
+              p1Effects.push({ type: 'attack_down', duration: 3, value: 30 });
+              battleLog.push(`🐸 Ataque de ${gameState.player1_name} reduzido (-30%)!`);
+            } else if (hasAttackDown) {
+              battleLog.push(`🐸 Ataque de ${gameState.player1_name} já está reduzido!`);
+            } else {
+              battleLog.push(`🛡️ ${gameState.player1_name} resistiu à redução de ataque!`);
+            }
+          }
+          if (gameState.monster_type === 'ogre' && Math.random() < 0.20) {
+            const isResisted = Math.random() * 100 < p1CombatStats.resilience;
+            const hasStunned = p1Effects.some(e => e.type === 'stunned');
+            if (!isResisted && !hasStunned) {
+              p1Effects.push({ type: 'stunned', duration: 2 });
+              battleLog.push(`👹 ${gameState.player1_name} será atordoado no próximo turno!`);
+            } else if (hasStunned) {
+              battleLog.push(`👹 ${gameState.player1_name} já está atordoado!`);
+            } else {
+              battleLog.push(`🛡️ ${gameState.player1_name} resistiu ao atordoamento!`);
+            }
+          }
+          if (gameState.monster_type === 'bat' && gameState.location === 'cemetery') {
+            p2HP = Math.min(gameState.player2_max_hp, p2HP + 5);
+            battleLog.push(`🦇 ${gameState.player2_name} curou 5 HP`);
+          }
+          if (gameState.monster_type === 'fungus' && Math.random() < 0.30) {
+            const isResisted = Math.random() * 100 < p1CombatStats.resilience;
+            const hasPoisoned = p1Effects.some(e => e.type === 'poisoned');
+            if (!isResisted && !hasPoisoned) {
+              p1Effects.push({ type: 'poisoned', duration: 3, value: 5 });
+              battleLog.push(`🍄 ${gameState.player1_name} foi envenenado! (5 dano/turno)`);
+            } else if (hasPoisoned) {
+              battleLog.push(`🍄 ${gameState.player1_name} já está envenenado!`);
+            } else {
+              battleLog.push(`🛡️ ${gameState.player1_name} resistiu ao envenenamento!`);
+            }
+          }
+          if (gameState.monster_type === 'ghost' && Math.random() < 0.30) {
+            const isResisted = Math.random() * 100 < p1CombatStats.resilience;
+            const hasImmobilized = p1Effects.some(e => e.type === 'immobilized');
+            if (!isResisted && !hasImmobilized) {
+              p1Effects.push({ type: 'immobilized', duration: 2 });
+              battleLog.push(`👻 ${gameState.player1_name} será imobilizado no próximo turno!`);
+            } else if (hasImmobilized) {
+              battleLog.push(`👻 ${gameState.player1_name} já está imobilizado!`);
+            } else {
+              battleLog.push(`🛡️ ${gameState.player1_name} resistiu à imobilização!`);
+            }
+          }
+          if (gameState.monster_type === 'gravedigger' && Math.random() < 0.40) {
+            const hasDefenseUp = p2Effects.some(e => e.type === 'defense_up');
+            if (!hasDefenseUp) {
+              p2Effects.push({ type: 'defense_up', duration: 3, value: 30 });
+              battleLog.push(`⚰️ ${gameState.player2_name} ganhou Aumento de Defesa (+30%)!`);
+            }
+          }
+          if (gameState.monster_type === 'djinn' && Math.random() < 0.40) {
+            const burningDamage = Math.floor(dmgCalc.damage * 0.15);
+            burningTiles.push({ row: p1NewPos.row, col: p1NewPos.col, duration: 4, damage: burningDamage });
+            battleLog.push(`🔥 ${gameState.player1_name} está queimando! (${burningDamage} dano/turno)`);
+          }
+          if (gameState.monster_type === 'naga' && Math.random() < 0.40) {
+            const isResisted = Math.random() * 100 < p1CombatStats.resilience;
+            const hasDefenseDown = p1Effects.some(e => e.type === 'defense_down');
+            if (!isResisted && !hasDefenseDown) {
+              p1Effects.push({ type: 'defense_down', duration: 4, value: 40 });
+              battleLog.push(`🐍 Defesa de ${gameState.player1_name} reduzida (-40%)!`);
+            } else if (hasDefenseDown) {
+              battleLog.push(`🐍 Defesa de ${gameState.player1_name} já está reduzida!`);
+            } else {
+              battleLog.push(`🛡️ ${gameState.player1_name} resistiu à redução de defesa!`);
+            }
+            const hasAttackUp = p2Effects.some(e => e.type === 'attack_up');
+            if (!hasAttackUp) {
+              p2Effects.push({ type: 'attack_up', duration: 4, value: 30 });
+              battleLog.push(`🐍 ${gameState.player2_name} ganhou Aumento de Ataque (+30%)!`);
+            }
+          }
+          if (gameState.monster_type === 'anubis' && Math.random() < 0.40) {
+            const isResisted = Math.random() * 100 < p1CombatStats.resilience;
+            const hasPoisoned = p1Effects.some(e => e.type === 'poisoned');
+            const hasDefenseDown = p1Effects.some(e => e.type === 'defense_down');
+            if (!isResisted && (!hasPoisoned || !hasDefenseDown)) {
+              const poisonDamage = Math.floor(gameState.player1_max_hp * 0.08);
+              if (!hasPoisoned) {
+                p1Effects.push({ type: 'poisoned', duration: 4, value: poisonDamage });
+              }
+              if (!hasDefenseDown) {
+                p1Effects.push({ type: 'defense_down', duration: 4, value: 40 });
+              }
+              battleLog.push(`👁️ ${gameState.player1_name} foi ${!hasPoisoned ? 'envenenado' : ''} ${!hasPoisoned && !hasDefenseDown ? 'e' : ''} ${!hasDefenseDown ? 'teve defesa reduzida' : 'já sofre de alguns efeitos'}!`);
+            } else {
+              battleLog.push(`🛡️ ${gameState.player1_name} resistiu aos efeitos de Anúbis!`);
+            }
+          }
+        }
+      }
+    } else if (p2Attack) {
+      battleLog.push(`❌ ${gameState.player2_name} errou!`);
+    }
+
+    p1Effects = p1Effects.map(e => ({ ...e, duration: e.duration - 1 })).filter(e => e.duration > 0);
+    p2Effects = p2Effects.map(e => ({ ...e, duration: e.duration - 1 })).filter(e => e.duration > 0);
+    burningTiles = burningTiles.map(t => ({ ...t, duration: t.duration - 1 })).filter(t => t.duration > 0);
+
+    let newCooldown = gameState.player1_ability_cooldown;
+    if (usedAbility && usedAbility !== 'stunned_skip') {
+      if (usedAbility === 'trap' || usedAbility === 'heal' || usedAbility === 'slash' || usedAbility === 'lightning_bolt') {
+        newCooldown = 3;
+      } else {
+        newCooldown = 2;
+      }
+    } else if (newCooldown > 0) {
+      newCooldown = Math.max(0, newCooldown - 1);
+    }
+
+    if (currentTurn > 0) {
+      battleLog.push(`${gameState.player1_name}: ${Math.max(0, p1HP)}/${gameState.player1_max_hp} | ${gameState.player2_name}: ${Math.max(0, p2HP)}/${gameState.player2_max_hp}`);
+    }
+
+    const finalData = {
+      turn_number: currentTurn + 1,
+      player1_position: p1NewPos,
+      player2_position: p2NewPos,
+      player1_hp: Math.max(0, p1HP),
+      player2_hp: Math.max(0, p2HP),
+      player1_mana: p1Mana,
+      player1_effects: p1Effects,
+      player2_effects: p2Effects,
+      burning_tiles: burningTiles,
+      traps: traps,
+      player1_pending_move: null,
+      player2_pending_move: null,
+      player1_attack_target: null,
+      player1_attack_target_2: null,
+      player1_multi_targets: null,
+      player2_attack_target: null,
+      player1_moved: false,
+      player2_moved: false,
+      player1_attacked: false,
+      player2_attacked: false,
+      player1_ability_cooldown: newCooldown,
+      player1_ability_active: false,
+      battle_log: battleLog.slice(-30)
+    };
+
+    if (p1HP <= 0) {
+      finalData.winner = gameState.player2_name;
+      finalData.status = "finished";
+      battleLog.push(`👑 ${gameState.player2_name} venceu!`);
+      finalData.battle_log = battleLog.slice(-30);
+      
+      await updateGameMutation.mutateAsync({
+        id: selectedGame.id,
+        data: finalData
+      });
+      
+      const character = characters.find(c => c.id === gameState.player1_character_id);
+      if (character) {
+        updateCharacterMutation.mutate({
+          id: character.id,
+          data: { current_mana: character.max_mana || 10 }
+        });
+      }
+    } else if (p2HP <= 0) {
+      finalData.winner = gameState.player1_name;
+      finalData.status = "finished";
+      battleLog.push(`👑 ${gameState.player1_name} venceu!`);
+      finalData.battle_log = battleLog.slice(-30);
+      
+      if (gameState.player1_character_id) {
+        await applyRewards(gameState.player1_character_id, gameState, p1Mana);
+        finalData.rewards = precalculatedRewards || gameState.rewards;
+        
+        await updateGameMutation.mutateAsync({
+          id: selectedGame.id,
+          data: finalData
+        });
+        
+        setShowRewards(true);
+      }
+    } else {
+      updateGameMutation.mutate({
+        id: selectedGame.id,
+        data: finalData
+      });
+    }
+  };
+
+  const applyRewards = async (characterId, gameState, finalMana) => {
+    const character = characters.find(c => c.id === characterId);
+    if (!character) return;
+
+    const rewards = precalculatedRewards || gameState.rewards;
+    
+    const updates = {
+      experience: character.experience + rewards.experience,
+      current_mana: finalMana
+    };
+
+    const activeMissions = await base44.entities.Mission.filter({ 
+      created_by: user.email, 
+      character_id: characterId,
+      status: 'active'
+    });
+    
+    const missionUpdates = [];
+    
+    for (const mission of activeMissions) {
+      if (mission.monster_type === rewards.monsterType && 
+          mission.difficulty === rewards.difficulty &&
+          mission.location === rewards.location) {
+        const newKills = mission.kills_current + 1;
+        const missionUpdate = {
+          kills_current: newKills
+        };
+        
+        if (newKills >= mission.kills_required) {
+          missionUpdate.status = 'completed';
+        }
+        
+        missionUpdates.push(base44.entities.Mission.update(mission.id, missionUpdate));
+      }
+    }
+
+    if (rewards.item) {
+      missionUpdates.push(createInventoryMutation.mutateAsync(rewards.item));
+    }
+
+    await Promise.all([
+      base44.auth.updateMe({ 
+        souls: (user.souls || 0) + rewards.souls,
+        gold: (user.gold || 0) + rewards.gold,
+        battles_since_last_mission: (user.battles_since_last_mission || 0) + 1
+      }),
+      base44.entities.Character.update(characterId, updates),
+      ...missionUpdates
+    ]);
+
+    queryClient.invalidateQueries({ queryKey: ['characters'] });
+    queryClient.invalidateQueries({ queryKey: ['missions'] });
+    queryClient.invalidateQueries({ queryKey: ['inventory'] });
+    const newUser = await base44.auth.me();
+    setUser(newUser);
+  };
+
+  if (preparingBattle) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-emerald-900 via-green-800 to-lime-900 flex items-center justify-center">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="text-center"
+        >
+          <Loader2 className="w-16 h-16 text-amber-400 mx-auto mb-4 animate-spin" />
+          <h2 className="text-3xl font-bold text-amber-100 mb-2" style={{ fontFamily: 'serif' }}>
+            Preparando Batalha...
+          </h2>
+          <p className="text-emerald-300">Carregando arena e calculando recompensas</p>
+        </motion.div>
+      </div>
+    );
+  }
+
+  if (!selectedGame) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-emerald-900 via-green-800 to-lime-900 p-4 md:p-8 relative overflow-hidden">
+        <div className="absolute inset-0 pointer-events-none">
+          <motion.div
+            animate={{ x: [0, 100, 0] }}
+            transition={{ duration: 20, repeat: Infinity }}
+            className="absolute top-10 left-10 w-32 h-16 bg-white/20 rounded-full blur-xl"
+          />
+          <motion.div
+            animate={{ x: [0, -80, 0] }}
+            transition={{ duration: 25, repeat: Infinity }}
+            className="absolute top-32 right-20 w-40 h-20 bg-white/15 rounded-full blur-xl"
+          />
+        </div>
+
+        <div className="max-w-6xl mx-auto relative z-10">
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="text-center mb-12"
+          >
+            <div className="flex items-center justify-center gap-3 mb-4">
+              <Shield className="w-12 h-12 text-amber-400" />
+              <h1 className="text-5xl font-bold text-amber-100" style={{ fontFamily: 'serif' }}>
+                Midal
+              </h1>
+              <Swords className="w-12 h-12 text-amber-400" />
+            </div>
+            <p className="text-emerald-300 text-lg">Movimento Estratégico • Combate Tático</p>
+          </motion.div>
+
+          <NewBattleSetup
+            characters={characters.filter(c => c.created_by === user?.email)}
+            bestiary={bestiary}
+            inventory={inventory}
+            user={user}
+            onCreateGame={handleCreateGame}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  const character = characters.find(c => c.id === selectedGame.player1_character_id);
+  const ability = character?.ability;
+  const manaCost = getAbilityManaCost(ability);
+  const charClass = character?.class || 'Guerreiro';
+  
+  const p1Stats = applyEffects(selectedGame.player1_attack, selectedGame.player1_defense, selectedGame.player1_effects || []);
+  const p2Stats = applyEffects(selectedGame.player2_attack, selectedGame.player2_defense, selectedGame.player2_effects || []);
+  const isPlayer1Stunned = selectedGame.player1_effects?.some(e => e.type === 'stunned' && e.duration === 1);
+  const isPlayer1Immobilized = selectedGame.player1_effects?.some(e => e.type === 'immobilized' && e.duration === 1);
+
+  return (
+    <div className={cn(
+      "min-h-screen p-4 md:p-8 relative overflow-hidden",
+      selectedGame.location === 'cemetery' 
+        ? "bg-gradient-to-br from-slate-900 via-purple-950 to-slate-900"
+        : selectedGame.location === 'desert'
+        ? "bg-gradient-to-br from-yellow-900 via-orange-900 to-yellow-800"
+        : "bg-gradient-to-br from-emerald-900 via-green-800 to-lime-900"
+    )}>
+      <div className="absolute inset-0 pointer-events-none">
+        {selectedGame.location === 'forest' ? (
+          <>
+            <motion.div
+              animate={{ x: [0, 100, 0] }}
+              transition={{ duration: 20, repeat: Infinity }}
+              className="absolute top-10 left-10 w-32 h-16 bg-white/20 rounded-full blur-xl"
+            />
+            <motion.div
+              animate={{ x: [0, -80, 0] }}
+              transition={{ duration: 25, repeat: Infinity }}
+              className="absolute top-32 right-20 w-40 h-20 bg-white/15 rounded-full blur-xl"
+            />
+            <motion.div
+              animate={{ y: [-100, 800] }}
+              transition={{ duration: 30, repeat: Infinity, repeatDelay: 5 }}
+              className="absolute top-20 left-0"
+            >
+              <div className="flex gap-4">
+                <div className="w-2 h-2 rounded-full bg-black/30" />
+                <div className="w-2 h-2 rounded-full bg-black/20" />
+              </div>
+            </motion.div>
+          </>
+        ) : (
+          <>
+            <motion.div
+              animate={{ 
+                opacity: [0.1, 0.3, 0.1],
+                scale: [1, 1.2, 1]
+              }}
+              transition={{ duration: 8, repeat: Infinity }}
+              className="absolute top-20 left-20 w-40 h-40 bg-purple-500/20 rounded-full blur-3xl"
+            />
+            <motion.div
+              animate={{ 
+                opacity: [0.2, 0.4, 0.2],
+                scale: [1, 1.3, 1]
+              }}
+              transition={{ duration: 10, repeat: Infinity }}
+              className="absolute bottom-20 right-20 w-48 h-48 bg-indigo-500/20 rounded-full blur-3xl"
+            />
+            <motion.div
+              animate={{ y: [-20, 20, -20] }}
+              transition={{ duration: 15, repeat: Infinity }}
+              className="absolute top-40 right-40 w-32 h-32 bg-slate-500/10 rounded-full blur-2xl"
+            />
+          </>
+        )}
+      </div>
+
+      <div className="max-w-7xl mx-auto relative z-10">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+          <motion.div
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="flex items-center gap-3"
+          >
+            <Button
+              variant="outline"
+              onClick={selectedGame.status === "finished" ? handleProceed : handleQuit}
+              className={selectedGame.status === "finished" 
+                ? "bg-green-900/50 text-green-100 border-green-700/50 hover:bg-green-800/60"
+                : "bg-red-900/50 text-red-100 border-red-700/50 hover:bg-red-800/60"
+              }
+            >
+              {selectedGame.status === "finished" ? "→ Prosseguir" : <><X className="w-4 h-4 mr-2" /> Desistir</>}
+            </Button>
+            <div className="flex items-center gap-2">
+              <Swords className="w-6 h-6 text-amber-400" />
+              <h2 className="text-2xl font-bold text-amber-100" style={{ fontFamily: 'serif' }}>
+                {selectedGame.player1_name} vs {selectedGame.player2_name}
+              </h2>
+            </div>
+          </motion.div>
+
+          {selectedGame.status === "finished" && (
+            <motion.div
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              className="flex items-center gap-2 bg-gradient-to-r from-yellow-600 to-amber-600 text-white px-6 py-3 rounded-lg font-bold shadow-lg"
+            >
+              <Crown className="w-5 h-5" />
+              {selectedGame.winner} Venceu!
+            </motion.div>
+          )}
+        </div>
+
+        <div className="grid lg:grid-cols-2 gap-6">
+          <div className="space-y-6">
+            <div>
+              <HPDisplay 
+                playerName={selectedGame.player1_name}
+                hp={selectedGame.player1_hp}
+                maxHP={selectedGame.player1_max_hp}
+                mana={selectedGame.player1_mana}
+                maxMana={selectedGame.player1_max_mana}
+                attack={p1Stats.attack}
+                defense={p1Stats.defense}
+                effects={selectedGame.player1_effects}
+                manaUsed={manaUsed}
+              />
+              <div className="mb-2">
+                <p className="text-amber-300 text-sm font-bold text-center mb-1">
+                  {selectedGame.player1_moved ? "✓ Movimento Confirmado" : "Clique para Mover"}
+                </p>
+              </div>
+              <GameBoard
+                playerPosition={selectedGame.player1_position}
+                pendingPosition={selectedGame.player1_pending_move}
+                playerNumber={1}
+                charClass={charClass}
+                hitAnimation={hitAnimation}
+                onCellClick={!selectedGame.player1_moved ? handleMoveClick : null}
+                isMovementBoard={!selectedGame.player1_moved}
+                disabled={selectedGame.status === "finished" || isProcessing}
+                location={selectedGame.location}
+              />
+            </div>
+            
+            {selectedGame.player1_moved && !selectedGame.player1_attacked && !isPlayer1Stunned && (
+              <AbilityButton
+                ability={ability}
+                cooldown={selectedGame.player1_ability_cooldown || 0}
+                currentMana={selectedGame.player1_mana}
+                manaCost={manaCost}
+                onActivate={handleActivateAbility}
+                disabled={selectedGame.status === "finished" || isProcessing}
+                isActive={selectedGame.player1_ability_active}
+              />
+            )}
+
+            {selectedGame.player1_moved && !selectedGame.player1_attacked && isPlayer1Stunned && (
+              <Card className="bg-stone-900/50 backdrop-blur-sm border-amber-800/30">
+                <div className="p-6">
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="text-center"
+                  >
+                    <div className="mb-4 p-4 bg-yellow-900/50 rounded-lg border-2 border-yellow-600">
+                      <p className="text-yellow-300 text-2xl font-bold mb-2">⚡ Atordoado</p>
+                      <p className="text-yellow-400 text-sm">Você não pode atacar neste turno</p>
+                    </div>
+                    <Button
+                      onClick={handleSkipStunned}
+                      disabled={isProcessing}
+                      className="w-full bg-gradient-to-r from-yellow-600 to-yellow-700 hover:from-yellow-500 hover:to-yellow-600"
+                    >
+                      Pular Ataque
+                    </Button>
+                  </motion.div>
+                </div>
+              </Card>
+            )}
+
+            {isPlayer1Immobilized && !selectedGame.player1_moved && (
+              <Card className="bg-stone-900/50 backdrop-blur-sm border-amber-800/30">
+                <div className="p-6">
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="text-center"
+                  >
+                    <div className="mb-4 p-4 bg-purple-900/50 rounded-lg border-2 border-purple-600">
+                      <p className="text-purple-300 text-2xl font-bold mb-2">👻 Imobilizado</p>
+                      <p className="text-purple-400 text-sm">Você não pode se mover neste turno</p>
+                    </div>
+                    <Button
+                      onClick={handleSkipImmobilized}
+                      disabled={isProcessing}
+                      className="w-full bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-500 hover:to-purple-600"
+                    >
+                      Pular Movimento
+                    </Button>
+                  </motion.div>
+                </div>
+              </Card>
+            )}
+          </div>
+
+          <div className="space-y-6">
+            <div>
+              <HPDisplay 
+                playerName={selectedGame.player2_name}
+                hp={selectedGame.player2_hp}
+                maxHP={selectedGame.player2_max_hp}
+                attack={p2Stats.attack}
+                defense={p2Stats.defense}
+                effects={selectedGame.player2_effects}
+              />
+              <div className="mb-2">
+                <p className="text-amber-300 text-sm font-bold text-center mb-1">
+                  {selectedGame.player1_moved && !selectedGame.player1_attacked ? (
+                    selectedGame.player1_ability_active ? 
+                      (ability === 'double_strike' || ability === 'just_strike' || ability === 'royal_strike' || ability === 'slash' ? `⚔️ ${selectedAttacks.length}/2` :
+                       ability === 'arrow_line' || ability === 'sharp_arrow_line' ? '🏹 Selecione a Linha' :
+                       ability === 'magic_column' || ability === 'power_column' || ability === 'lightning_bolt' ? '⚡ Selecione a Coluna' :
+                       ability === 'trap' ? '💢 Coloque a Armadilha' :
+                       ability === 'heal' ? '💚 Selecione Alvo (Opcional)' :
+                       'Clique para Atacar') :
+                      "Clique para Atacar"
+                  ) : "Campo Inimigo"}
+                </p>
+              </div>
+              <GameBoard
+                playerPosition={selectedGame.player2_position}
+                pendingPosition={selectedGame.player2_pending_move}
+                attackTarget={selectedGame.player1_attack_target}
+                playerNumber={2}
+                monsterType={selectedGame.monster_type}
+                hitAnimation={hitAnimation}
+                onCellClick={selectedGame.player1_moved && !selectedGame.player1_attacked && !isPlayer1Stunned ? handleAttackClick : null}
+                isAttackBoard={selectedGame.player1_moved && !selectedGame.player1_attacked}
+                disabled={selectedGame.status === "finished" || isProcessing}
+                selectedAttacks={selectedAttacks}
+                ability={ability}
+                abilityActive={selectedGame.player1_ability_active}
+                location={selectedGame.location}
+                burningTiles={selectedGame.burning_tiles}
+                traps={selectedGame.traps}
+              />
+            </div>
+
+            {showRewards && selectedGame.status === "finished" && selectedGame.winner === selectedGame.player1_name && precalculatedRewards && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+              >
+                <Card className="bg-gradient-to-br from-yellow-900/50 to-amber-900/50 backdrop-blur-sm border-yellow-600/50">
+                  <div className="p-6">
+                    <h3 className="text-yellow-100 text-2xl font-bold mb-4 flex items-center gap-2" style={{ fontFamily: 'serif' }}>
+                      <Crown className="w-7 h-7 text-yellow-400" />
+                      Recompensas da Vitória!
+                    </h3>
+                    <div className="space-y-3">
+                      <motion.div
+                        initial={{ x: -20, opacity: 0 }}
+                        animate={{ x: 0, opacity: 1 }}
+                        transition={{ delay: 0.1 }}
+                        className="bg-green-900/40 rounded-lg p-4 border border-green-600/50"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-12 h-12 rounded-full bg-green-600 flex items-center justify-center">
+                            <TrendingUp className="w-6 h-6 text-white" />
+                          </div>
+                          <div>
+                            <p className="text-green-300 text-sm">Experiência Ganha</p>
+                            <p className="text-green-100 font-bold text-2xl">+{precalculatedRewards.experience} XP</p>
+                          </div>
+                        </div>
+                      </motion.div>
+                      
+                      <motion.div
+                        initial={{ x: -20, opacity: 0 }}
+                        animate={{ x: 0, opacity: 1 }}
+                        transition={{ delay: 0.2 }}
+                        className="bg-yellow-900/40 rounded-lg p-4 border border-yellow-600/50"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-12 h-12 rounded-full bg-yellow-600 flex items-center justify-center">
+                            <Coins className="w-6 h-6 text-white" />
+                          </div>
+                          <div>
+                            <p className="text-yellow-300 text-sm">Ouro Recebido</p>
+                            <p className="text-yellow-100 font-bold text-2xl">+{precalculatedRewards.gold} Ouro</p>
+                          </div>
+                        </div>
+                      </motion.div>
+
+                      <motion.div
+                        initial={{ x: -20, opacity: 0 }}
+                        animate={{ x: 0, opacity: 1 }}
+                        transition={{ delay: 0.25 }}
+                        className="bg-purple-900/40 rounded-lg p-4 border border-purple-600/50"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-12 h-12 rounded-full bg-purple-600 flex items-center justify-center">
+                            <Ghost className="w-6 h-6 text-white" />
+                          </div>
+                          <div>
+                            <p className="text-purple-300 text-sm">Almas Coletadas</p>
+                            <p className="text-purple-100 font-bold text-2xl">+{precalculatedRewards.souls} Almas</p>
+                          </div>
+                        </div>
+                      </motion.div>
+                      
+                      {precalculatedRewards.item && (
+                        <motion.div
+                          initial={{ x: -20, opacity: 0 }}
+                          animate={{ x: 0, opacity: 1 }}
+                          transition={{ delay: 0.3 }}
+                          className="bg-blue-900/40 rounded-lg p-4 border border-blue-600/50"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-12 h-12 rounded-full bg-blue-600 flex items-center justify-center">
+                              <Swords className="w-6 h-6 text-white" />
+                            </div>
+                            <div className="flex-1">
+                              <p className="text-blue-300 text-sm">Item Encontrado!</p>
+                              <p className="text-blue-100 font-bold text-xl">{precalculatedRewards.item.name}</p>
+                              <p className="text-blue-200 text-sm">+{precalculatedRewards.item.primary_substat_value} {precalculatedRewards.item.primary_substat}</p>
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
+                    </div>
+                  </div>
+                </Card>
+              </motion.div>
+            )}
+
+            <BattleLog log={selectedGame.battle_log || []} />
+          </div>
+        </div>
+      </div>
+
+      <AlertDialog open={quitDialogOpen} onOpenChange={setQuitDialogOpen}>
+        <AlertDialogContent className="bg-stone-900 border-amber-800/30">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-amber-100 flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-yellow-500" />
+              Desistir da Batalha?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-amber-300">
+              Tem certeza que deseja desistir desta batalha? Você não receberá recompensas e a batalha será perdida.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="bg-stone-800 text-amber-100 border-amber-900/50">
+              Não, continuar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmQuit}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              Sim, desistir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
