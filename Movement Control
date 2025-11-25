@@ -1,0 +1,113 @@
+import React from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Navigation } from "lucide-react";
+import { motion } from "framer-motion";
+import { cn } from "@/lib/utils";
+
+export default function MovementControls({ onMove, hasMoved, disabled, currentPlayerName }) {
+  return (
+    <Card className="bg-white/10 backdrop-blur-sm border-white/20 sticky top-4">
+      <CardHeader>
+        <CardTitle className="text-white flex items-center gap-2">
+          <Navigation className="w-5 h-5" />
+          Controles de Movimento
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="bg-blue-900/30 rounded-lg p-4 border border-blue-400/30">
+          <p className="text-cyan-200 text-sm mb-2">
+            <strong className="text-white">{currentPlayerName}</strong>, é sua vez!
+          </p>
+          <ol className="text-cyan-300 text-xs space-y-1 list-decimal list-inside">
+            <li>Mova seu navio</li>
+            <li>Escolha onde atacar</li>
+          </ol>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex justify-center">
+            <Button
+              onClick={() => onMove("up")}
+              disabled={hasMoved || disabled}
+              size="lg"
+              className={cn(
+                "bg-cyan-500 hover:bg-cyan-600 text-white w-16 h-16",
+                (hasMoved || disabled) && "opacity-50 cursor-not-allowed"
+              )}
+            >
+              <ArrowUp className="w-6 h-6" />
+            </Button>
+          </div>
+          
+          <div className="flex justify-center gap-2">
+            <Button
+              onClick={() => onMove("left")}
+              disabled={hasMoved || disabled}
+              size="lg"
+              className={cn(
+                "bg-cyan-500 hover:bg-cyan-600 text-white w-16 h-16",
+                (hasMoved || disabled) && "opacity-50 cursor-not-allowed"
+              )}
+            >
+              <ArrowLeft className="w-6 h-6" />
+            </Button>
+            
+            <div className="w-16 h-16 bg-white/5 rounded-lg flex items-center justify-center border border-white/10">
+              <Navigation className="w-6 h-6 text-cyan-400" />
+            </div>
+            
+            <Button
+              onClick={() => onMove("right")}
+              disabled={hasMoved || disabled}
+              size="lg"
+              className={cn(
+                "bg-cyan-500 hover:bg-cyan-600 text-white w-16 h-16",
+                (hasMoved || disabled) && "opacity-50 cursor-not-allowed"
+              )}
+            >
+              <ArrowRight className="w-6 h-6" />
+            </Button>
+          </div>
+          
+          <div className="flex justify-center">
+            <Button
+              onClick={() => onMove("down")}
+              disabled={hasMoved || disabled}
+              size="lg"
+              className={cn(
+                "bg-cyan-500 hover:bg-cyan-600 text-white w-16 h-16",
+                (hasMoved || disabled) && "opacity-50 cursor-not-allowed"
+              )}
+            >
+              <ArrowDown className="w-6 h-6" />
+            </Button>
+          </div>
+        </div>
+
+        {hasMoved && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-green-500/20 border border-green-400/50 rounded-lg p-3 text-center"
+          >
+            <p className="text-green-300 text-sm font-medium">
+              ✓ Movimento realizado!
+            </p>
+            <p className="text-green-200 text-xs mt-1">
+              Agora escolha onde atacar
+            </p>
+          </motion.div>
+        )}
+
+        {disabled && (
+          <div className="bg-yellow-500/20 border border-yellow-400/50 rounded-lg p-3 text-center">
+            <p className="text-yellow-200 text-sm">
+              Jogo finalizado
+            </p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
